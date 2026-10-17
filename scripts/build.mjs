@@ -1,128 +1,35 @@
 /**
- * 生成 GitHub 主页用到的 SVG，并刷新 README 里标记之间的内容。
- * 视觉沿用博客 elvhack.com：暗色 + 荧光绿，亮色是暖白纸 + 国际橙；信号点阵、HUD 标注、等宽字。
+ * 生成 GitHub 主页用到的静态 SVG（头图、频道卷宗、全年信号波形），并刷新 README 里标记之间的内容。
+ * 实时的部分（信号台日志、按钮计数、行情）由 worker/ 里的 Cloudflare Worker 按请求生成。
  *
- *   node scripts/build.mjs          # 本地：读 GITHUB_TOKEN / GH_TOKEN，没有就跳过需要 API 的部分
+ *   node scripts/build.mjs          # 读 GITHUB_TOKEN / GH_TOKEN，没有就跳过需要 API 的部分
  *
  * 不依赖任何 npm 包。拉不到数据时保留上一次生成的文件，不会把 README 刷成空的。
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { THEMES, barcode, baseStyle, esc, hashStr, monoWidth, r1, rng, wrap } from './lib.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const USER = 'elv-hack';
 const SITE = 'https://elvhack.com';
-/** 主页上展示的仓库，按顺序 */
-const FEATURED = ['elvhack', 'quant-human', 'elvpath', 'schat'];
+/** 四个频道，各配一个仓库；stamp 是卡片上盖的章 */
+const CHANNELS = [
+  { code: 'QUANT', repo: 'quantcore', stamp: 'ALPHA' },
+  { code: 'SEC', repo: 'Z3r0', stamp: 'RED TEAM' },
+  { code: 'DEV', repo: 'elvhack', stamp: 'SHIPPED' },
+  { code: 'INTEL', repo: 'nexus', stamp: 'OSINT' },
+];
 const POSTS = 5;
 const TZ = 'Asia/Shanghai';
 
-const THEMES = {
-  dark: {
-    bg: '#0a0b0d',
-    elev: '#121418',
-    fg: '#ecebe6',
-    muted: '#9b9b95',
-    faint: '#55575a',
-    line: 'rgba(236,235,230,0.11)',
-    strong: 'rgba(236,235,230,0.26)',
-    accent: '#c6ff3d',
-  },
-  light: {
-    bg: '#f3efe6',
-    elev: '#fbf9f4',
-    fg: '#161412',
-    muted: '#5c5750',
-    faint: '#a8a196',
-    line: 'rgba(22,20,18,0.12)',
-    strong: 'rgba(22,20,18,0.28)',
-    accent: '#ff5a1f',
-  },
-};
-
-const font = (file) => readFileSync(join(ROOT, 'scripts/fonts', file)).toString('base64');
-const FONTS = `
-  @font-face { font-family: 'SG'; src: url(data:font/woff2;base64,${font('space-grotesk.woff2')}) format('woff2'); font-weight: 300 700; }
-  @font-face { font-family: 'JBM'; src: url(data:font/woff2;base64,${font('jetbrains-mono.woff2')}) format('woff2'); font-weight: 100 800; }`;
-const SANS = `'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei', system-ui, sans-serif`;
-const STYLE_BASE = `
-  .mono { font-family: 'JBM', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .display { font-family: 'SG', 'JBM', system-ui, sans-serif; font-weight: 700; }
-  .sans { font-family: ${SANS}; }
-  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }`;
-
-// ---------- 小工具 ----------
-
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const r1 = (n) => Math.round(n * 10) / 10;
-
-function hash2(x, y, seed = 0) {
-  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 982451653)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-function hashStr(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
-  return h >>> 0;
-}
-
-const smooth = (t) => t * t * (3 - 2 * t);
-const smoothstep = (a, b, x) => smooth(Math.min(Math.max((x - a) / (b - a), 0), 1));
-
-function noise(x, y, seed = 0) {
-  const xi = Math.floor(x);
-  const yi = Math.floor(y);
-  const u = smooth(x - xi);
-  const v = smooth(y - yi);
-  const a = hash2(xi, yi, seed);
-  const b = hash2(xi + 1, yi, seed);
-  const c = hash2(xi, yi + 1, seed);
-  const d = hash2(xi + 1, yi + 1, seed);
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
-}
+const fontFile = (file) => readFileSync(join(ROOT, 'scripts/fonts', file)).toString('base64');
+const BASE = baseStyle({ mono: fontFile('jetbrains-mono.woff2'), grotesk: fontFile('space-grotesk.woff2') });
 
 const dayFormat = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: TZ });
 const fmtDate = (date) => dayFormat.format(date).replaceAll('/', '.');
-
-/** 粗略估算文字宽度：中日韩字符按 1em，其余按 0.56em */
-const textWidth = (s, size) => [...s].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2e80 ? size : size * 0.56), 0);
-
-/** 按宽度折行，最多 lines 行，超出加省略号 */
-function wrap(text, size, width, lines) {
-  const tokens = text.match(/[⺀-￿]|[^\s⺀-￿]+|\s+/g) ?? [];
-  const out = [''];
-  for (const token of tokens) {
-    const line = out[out.length - 1];
-    if (textWidth(line + token, size) <= width) {
-      out[out.length - 1] = line + token;
-    } else if (/^\s+$/.test(token)) {
-      out.push('');
-    } else {
-      out.push(token);
-    }
-  }
-  const result = out.map((l) => l.trim()).filter(Boolean);
-  if (result.length > lines) {
-    let last = result[lines - 1];
-    while (textWidth(`${last}…`, size) > width) last = [...last].slice(0, -1).join('');
-    result.length = lines;
-    result[lines - 1] = `${last.trimEnd()}…`;
-  }
-  return result;
-}
-
-const cropMarks = (w, h, inset, len, color) =>
-  [
-    [inset, inset, 1, 1],
-    [w - inset, inset, -1, 1],
-    [inset, h - inset, 1, -1],
-    [w - inset, h - inset, -1, -1],
-  ]
-    .map(([x, y, dx, dy]) => `<path d="M${x} ${y + dy * len}V${y}H${x + dx * len}" fill="none" stroke="${color}" stroke-width="1"/>`)
-    .join('');
 
 const write = (path, content) => {
   writeFileSync(join(ROOT, path), content);
@@ -134,238 +41,287 @@ const write = (path, content) => {
 function header(theme) {
   const t = THEMES[theme];
   const W = 1200;
-  const H = 420;
-  const CELL = 20;
+  const H = 580;
 
-  // 信号点阵：两层噪声决定每个点的大小和浓淡（和博客文章页的点阵背景同一个思路）
-  const dots = [];
-  const sparks = [];
-  for (let y = CELL / 2; y < H; y += CELL) {
-    for (let x = CELL / 2; x < W; x += CELL) {
-      const n = 0.62 * noise(x / 230, y / 230, 3) + 0.38 * noise(x / 95, y / 95, 11);
-      const level = smoothstep(0.3, 0.85, n);
-      dots.push(`<circle cx="${x}" cy="${y}" r="${r1(0.9 + 2.5 * level)}" opacity="${r1(0.12 + 0.6 * level)}"/>`);
-      // 右半边少数信号强的点用强调色闪烁
-      if (x > 640 && level > 0.55 && hash2(x, y, 5) > 0.9) sparks.push([x, y, r1(1.4 + 2.2 * level)]);
-    }
+  // 顶部滚动的密级横幅
+  const unit = ' CLASSIFIED // QUANT · SEC · DEV · INTEL // SUBJECT: ELVHACK // EYES ONLY //';
+  const marqSize = 14;
+  const marqSpacing = 2;
+  const unitW = unit.length * (marqSize * 0.6 + marqSpacing);
+  const marquee = unit.repeat(Math.ceil((W * 2) / unitW) + 1);
+
+  // 右下角滚动的内存转储
+  const rand = rng('elvhack-hexdump');
+  const hexLines = [];
+  for (let i = 0; i < 16; i++) {
+    const bytes = Array.from({ length: 8 }, () => Math.floor(rand() * 256));
+    const ascii = bytes.map((b) => (b > 32 && b < 127 && b !== 60 && b !== 62 && b !== 38 ? String.fromCharCode(b) : '.')).join('');
+    hexLines.push(`0x${(0x7ffe0 + i * 8).toString(16).toUpperCase()}  ${bytes.map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}  ${ascii}`);
   }
-
-  // 示波器窗口
-  const sx = 770;
-  const sy = 92;
-  const sw = 366;
-  const sh = 232;
-  const cy = sy + sh / 2;
-  const grid = [];
-  for (let i = 1; i < 8; i++) grid.push(`<path d="M${r1(sx + (sw / 8) * i)} ${sy}V${sy + sh}"/>`);
-  for (let i = 1; i < 6; i++) grid.push(`<path d="M${sx} ${r1(sy + (sh / 6) * i)}H${sx + sw}"/>`);
-  const wave = (period, amp, harmonics, phase) => {
-    const pts = [];
-    for (let x = 0; x <= sw + period; x += 3) {
-      const v = harmonics.reduce((s, [k, a, ph]) => s + a * Math.sin(((2 * Math.PI * k) / period) * x + ph + phase), 0);
-      pts.push(`${r1(sx + x)},${r1(cy - amp * v)}`);
-    }
-    return `M${pts.join('L')}`;
-  };
-  const P1 = 183;
-  const P2 = 122;
-  const wave1 = wave(P1, 62, [[1, 0.7, 0], [3, 0.22, 1.3], [5, 0.08, 0.4]], 0);
-  const wave2 = wave(P2, 34, [[1, 1, 0], [2, 0.3, 2.1]], 1.1);
-
-  const sparkSvg = sparks
-    .map(([x, y, r], i) => `<circle class="spark" cx="${x}" cy="${y}" r="${r}" style="animation-delay:${r1((i * 0.73) % 4)}s"/>`)
+  const hexX = 812;
+  const hexTop = 392;
+  const hexH = 112;
+  const LINE = 18;
+  const hexText = [...hexLines, ...hexLines]
+    .map((line, i) => `<text x="${hexX + 14}" y="${hexTop + 32 + i * LINE}">${esc(line)}</text>`)
     .join('');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="elvhack — 代码、视觉与好奇心的个人实验室">
-<style>${FONTS}${STYLE_BASE}
-  .spark { fill: ${t.accent}; opacity: 0.15; animation: twinkle 4s ease-in-out infinite; }
-  .band { transform: translateY(-200px); animation: scan 7.5s linear infinite; }
-  .cursor { animation: blink 1.1s steps(1) infinite; }
-  .live { animation: pulse 2.4s ease-in-out infinite; }
-  .w1 { animation: run1 3.6s linear infinite; }
-  .w2 { animation: run2 5.2s linear infinite; }
-  @keyframes twinkle { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
-  @keyframes scan { from { transform: translateY(-180px); } to { transform: translateY(${H + 40}px); } }
+  // CLEARANCE 一栏的“解密”过程：几帧乱码逐步变成明文
+  const clear = 'QUANT · SEC · DEV · INTEL';
+  const glyphs = 'ABCDEF0123456789#%&@$/\\';
+  const scr = rng('elvhack-decrypt');
+  const FRAMES = 9;
+  const frames = Array.from({ length: FRAMES }, (_, f) =>
+    [...clear].map((ch, i) => (i < (f / FRAMES) * clear.length || ch === ' ' ? ch : glyphs[Math.floor(scr() * glyphs.length)])).join(''),
+  );
+  const CYCLE = 7;
+  const STEP = 0.09;
+  const finalAt = ((FRAMES * STEP) / CYCLE) * 100;
+
+  // 四个频道框，轮流点亮
+  const boxW = 168;
+  const boxes = CHANNELS.map(({ code }, i) => {
+    const x = 40 + i * (boxW + 12);
+    const label = `0${i + 1} ${code}`;
+    return `<g>
+      <rect x="${x}" y="526" width="${boxW}" height="34" fill="none" stroke="${t.strong}"/>
+      <text class="mono" x="${x + 14}" y="548" font-size="14" letter-spacing="2" fill="${t.muted}">${label}</text>
+      <g class="lit" style="animation-delay:${i * 2}s"><rect x="${x}" y="526" width="${boxW}" height="34" fill="${t.accent}"/>
+      <text class="mono" x="${x + 14}" y="548" font-size="14" font-weight="700" letter-spacing="2" fill="${t.onAccent}">${label}</text></g>
+    </g>`;
+  }).join('');
+
+  // 标题切片：每片是一条横带，故障时整条左右错开
+  const slices = [
+    [196, 30, 'g1', '5s', '0s'],
+    [252, 16, 'g2', '5s', '-0.15s'],
+    [284, 22, 'g3', '7s', '-2.2s'],
+  ]
+    .map(
+      ([y, h, cls, dur, delay], i) => `<clipPath id="slice${i}"><rect x="0" y="${y}" width="${W}" height="${h}"/></clipPath>
+      <g clip-path="url(#slice${i})"><g class="${cls}" style="animation-duration:${dur};animation-delay:${delay}">
+        <rect x="-40" y="${y}" width="${W + 80}" height="${h}" fill="${t.bg}"/><use href="#word" fill="${t.fg}"/>
+        <rect x="-40" y="${y + h - 2}" width="${W + 80}" height="2" fill="${t.accent}" opacity="0.8"/>
+      </g></g>`,
+    )
+    .join('');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="ELVHACK — QUANT · SEC · DEV · INTEL">
+<style>${BASE}
+  .marq { animation: marq ${r1(unitW / 38)}s linear infinite; }
+  .ga { transform: translateX(-5px); animation: ga 5s steps(1, end) infinite; mix-blend-mode: ${t.blend}; }
+  .gb { transform: translateX(5px); animation: gb 5s steps(1, end) infinite; mix-blend-mode: ${t.blend}; }
+  .g1, .g2, .g3 { opacity: 0; animation: glitch 5s steps(1, end) infinite; }
+  .g2 { animation-name: glitch2; }
+  .g3 { animation-name: glitch3; }
+  .fr { opacity: 0; animation: fr ${CYCLE}s steps(1, end) infinite; }
+  .fin { animation: fin ${CYCLE}s steps(1, end) infinite; }
+  .hex { animation: hex 14s linear infinite; }
+  .lit { opacity: 0; animation: lit 8s steps(1, end) infinite; }
+  .blink { animation: blink 1.2s steps(1, end) infinite; }
+  .crt { transform: translateY(-160px); animation: crt 6.5s linear infinite; }
+  @keyframes marq { to { transform: translateX(-${r1(unitW)}px); } }
+  @keyframes ga { 0% { transform: translateX(-5px); } 88% { transform: translateX(-16px); } 89.5% { transform: translateX(-2px); } 91% { transform: translateX(-11px); } 92.5% { transform: translateX(-5px); } }
+  @keyframes gb { 0% { transform: translateX(5px); } 88% { transform: translateX(13px); } 89.5% { transform: translateX(3px); } 91% { transform: translateX(9px); } 92.5% { transform: translateX(5px); } }
+  @keyframes glitch { 0% { opacity: 0; transform: none; } 88% { opacity: 1; transform: translateX(-26px); } 89.5% { transform: translateX(18px); } 91% { transform: translateX(-8px); } 92.5% { opacity: 0; transform: none; } }
+  @keyframes glitch2 { 0% { opacity: 0; transform: none; } 88.5% { opacity: 1; transform: translateX(34px); } 90% { transform: translateX(-12px); } 92% { opacity: 0; transform: none; } }
+  @keyframes glitch3 { 0% { opacity: 0; transform: none; } 70% { opacity: 1; transform: translateX(-14px); } 71.5% { transform: translateX(22px); } 73% { opacity: 0; transform: none; } }
+  @keyframes fr { 0% { opacity: 1; } ${r1((STEP / CYCLE) * 100)}% { opacity: 0; } }
+  @keyframes fin { 0% { opacity: 0; } ${r1(finalAt)}% { opacity: 1; } }
+  @keyframes hex { to { transform: translateY(-${hexLines.length * LINE}px); } }
+  @keyframes lit { 0% { opacity: 1; } 25% { opacity: 0; } }
   @keyframes blink { 50% { opacity: 0; } }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
-  @keyframes run1 { to { transform: translateX(-${P1}px); } }
-  @keyframes run2 { to { transform: translateX(-${P2}px); } }
+  @keyframes crt { to { transform: translateY(${H + 40}px); } }
 </style>
 <defs>
-  <clipPath id="card"><rect width="${W}" height="${H}" rx="14"/></clipPath>
-  <clipPath id="scope"><rect x="${sx}" y="${sy}" width="${sw}" height="${sh}"/></clipPath>
-  <linearGradient id="fadeX" x1="0" x2="1" y1="0" y2="0">
-    <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
-    <stop offset="0.42" stop-color="#fff" stop-opacity="0.3"/>
-    <stop offset="0.62" stop-color="#fff" stop-opacity="1"/>
+  <text id="word" class="display" x="40" y="318" font-size="250" textLength="1120" lengthAdjust="spacingAndGlyphs">ELVHACK</text>
+  <pattern id="scanlines" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="${t.fg}" opacity="0.045"/></pattern>
+  <linearGradient id="crtGrad" x1="0" x2="0" y1="0" y2="1">
+    <stop offset="0" stop-color="${t.accent}" stop-opacity="0"/>
+    <stop offset="0.85" stop-color="${t.accent}" stop-opacity="0.07"/>
+    <stop offset="1" stop-color="${t.accent}" stop-opacity="0"/>
   </linearGradient>
-  <linearGradient id="bandY" x1="0" x2="0" y1="0" y2="1">
-    <stop offset="0" stop-color="#fff" stop-opacity="0"/>
-    <stop offset="0.7" stop-color="#fff" stop-opacity="0.9"/>
-    <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-  </linearGradient>
-  <linearGradient id="edgeY" x1="0" x2="0" y1="0" y2="1">
-    <stop offset="0" stop-color="#000" stop-opacity="1"/>
-    <stop offset="0.07" stop-color="#000" stop-opacity="1"/>
-    <stop offset="0.16" stop-color="#000" stop-opacity="0"/>
-    <stop offset="0.8" stop-color="#000" stop-opacity="0"/>
-    <stop offset="0.9" stop-color="#000" stop-opacity="1"/>
-    <stop offset="1" stop-color="#000" stop-opacity="1"/>
-  </linearGradient>
-  <!-- 左边压淡给标题让位，上下两条压暗给 HUD 文字让位 -->
-  <mask id="fade" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="url(#fadeX)"/><rect width="${W}" height="${H}" fill="url(#edgeY)"/></mask>
-  <mask id="scanMask" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect class="band" width="${W}" height="160" fill="url(#bandY)"/></mask>
-  <g id="dots">${dots.join('')}</g>
+  <clipPath id="hexClip"><rect x="${hexX}" y="${hexTop + 14}" width="348" height="${hexH - 14}"/></clipPath>
+  <clipPath id="frame"><rect width="${W}" height="${H}"/></clipPath>
 </defs>
-<g clip-path="url(#card)">
-  <rect width="${W}" height="${H}" fill="${t.bg}"/>
-  <g mask="url(#fade)">
-    <use href="#dots" fill="${t.fg}" opacity="0.55"/>
-    <g mask="url(#scanMask)"><use href="#dots" fill="${t.accent}"/></g>
-    ${sparkSvg}
-  </g>
+<g clip-path="url(#frame)">
+<rect width="${W}" height="${H}" fill="${t.bg}"/>
+<g stroke="${t.line}">${Array.from({ length: 11 }, (_, i) => `<path d="M${(i + 1) * 100} 38V${H}"/>`).join('')}</g>
 
-  <!-- 示波器 -->
-  <rect x="${sx}" y="${sy}" width="${sw}" height="${sh}" fill="${t.elev}" stroke="${t.strong}"/>
-  <g stroke="${t.line}" stroke-width="1" fill="none">${grid.join('')}</g>
-  <path d="M${sx} ${cy}H${sx + sw}M${sx + sw / 2} ${sy}V${sy + sh}" stroke="${t.strong}" stroke-dasharray="2 4"/>
-  <g clip-path="url(#scope)" fill="none" stroke-linejoin="round">
-    <path class="w2" d="${wave2}" stroke="${t.muted}" stroke-width="1.2" opacity="0.6"/>
-    <path class="w1" d="${wave1}" stroke="${t.accent}" stroke-width="2"/>
-  </g>
-  <text class="mono" x="${sx + 12}" y="${sy + 24}" font-size="14" fill="${t.muted}">CH1  SIG-ELVH</text>
-  <text class="mono" x="${sx + sw - 12}" y="${sy + 24}" font-size="14" fill="${t.faint}" text-anchor="end">2.0 V/div</text>
-  <text class="mono" x="${sx + 12}" y="${sy + sh - 13}" font-size="14" fill="${t.faint}">CH2  NOISE</text>
-  <text class="mono" x="${sx + sw - 12}" y="${sy + sh - 13}" font-size="14" fill="${t.faint}" text-anchor="end">500 ms/div</text>
+<!-- 密级横幅 -->
+<rect width="${W}" height="38" fill="${t.stripBg}"/>
+<text class="mono marq" x="0" y="25" font-size="${marqSize}" font-weight="700" letter-spacing="${marqSpacing}" fill="${t.stripFg}" xml:space="preserve">${esc(marquee)}</text>
 
-  <!-- 标题 -->
-  <text class="mono" x="64" y="132" font-size="16" letter-spacing="3" fill="${t.accent}">// PERSONAL LAB</text>
-  <text class="display" x="58" y="252" font-size="132" letter-spacing="-4" fill="${t.fg}">elvhack<tspan class="cursor" fill="${t.accent}">_</tspan></text>
-  <text class="sans" x="66" y="306" font-size="26" fill="${t.muted}">代码、视觉与好奇心的个人实验室。</text>
-  <text class="mono" x="66" y="342" font-size="17" letter-spacing="1" fill="${t.faint}">code · visuals · curiosity</text>
+<!-- HUD -->
+<rect x="40" y="62" width="11" height="11" fill="${t.accent}"/>
+<text class="mono" x="62" y="73" font-size="14" letter-spacing="2" fill="${t.muted}">SIGINT TERMINAL // NODE ELV-HACK // REV 2.6</text>
+<circle class="blink" cx="${W - 142}" cy="68" r="5" fill="${t.alt}"/>
+<text class="mono" x="${W - 40}" y="73" font-size="14" letter-spacing="2" fill="${t.muted}" text-anchor="end">REC LIVE</text>
+<text class="mono" x="40" y="112" font-size="12" letter-spacing="2" fill="${t.faint}">FIG.01 — SUBJECT IDENT</text>
+<text class="mono" x="${W - 40}" y="112" font-size="12" letter-spacing="2" fill="${t.faint}" text-anchor="end">LAT ██.████ / LON ███.████</text>
 
-  <!-- HUD -->
-  <rect x="40" y="33" width="11" height="11" fill="${t.accent}"/>
-  <text class="mono" x="62" y="44" font-size="15" letter-spacing="2" fill="${t.muted}">SIGNAL · ELVHACK.COM</text>
-  <circle class="live" cx="${W - 138}" cy="39" r="5" fill="${t.accent}"/>
-  <text class="mono" x="${W - 40}" y="44" font-size="15" letter-spacing="2" fill="${t.muted}" text-anchor="end">ONLINE</text>
-  <text class="mono" x="40" y="${H - 28}" font-size="15" letter-spacing="2" fill="${t.faint}">EST. 2021 · GITHUB.COM/ELV-HACK</text>
-  <text class="mono" x="${W - 40}" y="${H - 28}" font-size="15" letter-spacing="2" fill="${t.faint}" text-anchor="end">X @ELVHACK · TIKTOK @ELVHACK</text>
-  ${cropMarks(W, H, 18, 14, t.strong)}
+<!-- 标题：两层错位的色版 + 正片 + 故障切片 -->
+<use class="ga" href="#word" fill="${t.alt}"/>
+<use class="gb" href="#word" fill="${t.accent}"/>
+<use href="#word" fill="${t.fg}"/>
+${slices}
+
+<path d="M40 356H${W - 40}" stroke="${t.strong}"/>
+<text class="mono" x="40" y="376" font-size="11" letter-spacing="2" fill="${t.faint}">DOSSIER</text>
+<text class="mono" x="${hexX}" y="376" font-size="11" letter-spacing="2" fill="${t.faint}">MEMORY DUMP // 0x7FFE0</text>
+
+<!-- 档案 -->
+<g class="mono" font-size="18">
+  <text x="40" y="414" letter-spacing="2" fill="${t.faint}">SUBJECT</text>
+  <text x="220" y="414" fill="${t.fg}">ELVHACK</text>
+  <text x="40" y="446" letter-spacing="2" fill="${t.faint}">REAL NAME</text>
+  <rect x="220" y="430" width="248" height="21" fill="${t.fg}"/>
+  <text x="482" y="446" font-size="13" letter-spacing="2" fill="${t.faint}">[REDACTED]</text>
+  <text x="40" y="478" letter-spacing="2" fill="${t.faint}">CLEARANCE</text>
+  ${frames.map((f, i) => `<text class="fr" x="220" y="478" fill="${t.muted}" style="animation-delay:${r1(i * STEP * 100) / 100}s" xml:space="preserve">${esc(f)}</text>`).join('')}
+  <text class="fin" x="220" y="478" fill="${t.accent}" xml:space="preserve">${esc(clear)}</text>
+  <text x="40" y="510" letter-spacing="2" fill="${t.faint}">BASE</text>
+  <text x="220" y="510" fill="${t.fg}">ELVHACK.COM</text>
+  <text x="480" y="510" letter-spacing="2" fill="${t.faint}">STATUS</text>
+  <circle class="blink" cx="586" cy="504" r="5" fill="${t.accent}"/>
+  <text x="600" y="510" fill="${t.fg}">ACTIVE</text>
 </g>
-<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="14" fill="none" stroke="${t.line}"/>
+
+<!-- 内存转储 -->
+<rect x="${hexX}" y="${hexTop}" width="348" height="${hexH}" fill="${t.panel}" stroke="${t.strong}"/>
+<g clip-path="url(#hexClip)"><g class="mono hex" font-size="12" fill="${t.muted}" xml:space="preserve">${hexText}</g></g>
+<rect x="${hexX}" y="${hexTop}" width="348" height="14" fill="${t.panel}"/>
+
+<!-- 频道 + 条形码 -->
+${boxes}
+${barcode('elvhack-tx', hexX, 526, 230, 34, t.fg)}
+<text class="mono" x="${W - 40}" y="548" font-size="12" letter-spacing="1" fill="${t.faint}" text-anchor="end">TX 0x5F649D</text>
+
+<!-- 扫描线 -->
+<rect width="${W}" height="${H}" fill="url(#scanlines)" pointer-events="none"/>
+<rect class="crt" width="${W}" height="160" fill="url(#crtGrad)"/>
+</g>
+<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" fill="none" stroke="${t.strong}"/>
 </svg>
 `;
 }
 
-// ---------- 仓库卡片 ----------
+// ---------- 频道卷宗 ----------
 
-const LANG_FALLBACK = '#8b8b85';
-
-/** 每个仓库一个由名字哈希决定的李萨如小图形，和博客的生成封面一个思路 */
-function lissajous(name, x, y, size) {
-  const h = hashStr(name);
-  const a = 1 + (h % 4);
-  const b = a + 1 + ((h >>> 3) % 3);
-  const phase = ((h >>> 7) % 100) / 100 * Math.PI;
-  const pts = [];
-  for (let i = 0; i <= 160; i++) {
-    const s = (i / 160) * Math.PI * 2;
-    pts.push(`${r1(x + size / 2 + (size / 2) * Math.sin(a * s + phase))},${r1(y + size / 2 + (size / 2) * Math.sin(b * s))}`);
-  }
-  return `M${pts.join('L')}Z`;
-}
-
-function repoCard(repo, index, theme) {
+function dossier(channel, repo, index, theme) {
   const t = THEMES[theme];
   const W = 420;
-  const H = 178;
-  const lines = wrap(repo.description || '（还没有描述）', 14, W - 48, 2);
-  const lang = repo.primaryLanguage;
-  const updated = fmtDate(new Date(repo.pushedAt));
-  let bx = 24;
-  const bottom = [];
-  if (lang) {
-    bottom.push(`<circle cx="${bx + 5}" cy="${H - 23}" r="5" fill="${lang.color || LANG_FALLBACK}"/>`);
-    bottom.push(`<text class="mono" x="${bx + 16}" y="${H - 19}" font-size="12" fill="${t.muted}">${esc(lang.name)}</text>`);
-    bx += 16 + textWidth(lang.name, 12) + 22;
-  }
-  if (repo.stargazerCount > 0) bottom.push(`<text class="mono" x="${bx}" y="${H - 19}" font-size="12" fill="${t.muted}">★ ${repo.stargazerCount}</text>`);
+  const H = 240;
+  const cut = 22;
+  const tab = `CH.0${index + 1} // ${channel.code}`;
+  const tabW = tab.length * (13 * 0.6 + 2) + 26;
+  const caseId = hashStr(repo.name).toString(16).toUpperCase().slice(0, 6);
+  const pushed = new Date(repo.pushedAt);
+  const active = Date.now() - pushed.getTime() < 30 * 86400_000;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(repo.name)}：${esc(repo.description || '')}">
-<style>${FONTS}${STYLE_BASE}
-  .mark { stroke-dasharray: 1; animation: draw 2.4s cubic-bezier(0.3, 0.6, 0.2, 1); }
-  @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+  let body;
+  if (repo.description) {
+    body = wrap(repo.description, 14, W - 44, 2)
+      .map((line, i) => `<text class="sans" x="22" y="${142 + i * 22}" font-size="14" fill="${t.muted}">${esc(line)}</text>`)
+      .join('');
+  } else {
+    // 没有简介：涂黑，而不是替作者编一句
+    const rand = rng(`redact-${repo.name}`);
+    const bars = [];
+    for (let row = 0; row < 2; row++) {
+      let x = 22;
+      while (x < W - 90) {
+        const w = 30 + rand() * 90;
+        bars.push(`<rect x="${r1(x)}" y="${128 + row * 22}" width="${r1(Math.min(w, W - 60 - x))}" height="14" fill="${t.fg}" opacity="0.85"/>`);
+        x += w + 8;
+      }
+    }
+    body = `${bars.join('')}<text class="mono" x="22" y="${186}" font-size="11" letter-spacing="2" fill="${t.faint}">[DESCRIPTION REDACTED]</text>`;
+  }
+  const origin = repo.isFork && repo.parent ? `FORKED FROM ${repo.parent.nameWithOwner}` : `${USER}/${repo.name}`;
+  const stampW = monoWidth(channel.stamp, 15) + channel.stamp.length * 4 + 24;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(channel.code)}：${esc(repo.name)}">
+<style>${BASE}
+  .stamp { transform-box: fill-box; transform-origin: center; animation: stamp 0.55s cubic-bezier(0.2, 0.7, 0.2, 1.2) both; animation-delay: 0.3s; }
+  @keyframes stamp { from { transform: scale(1.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 </style>
-<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="10" fill="${t.bg}" stroke="${t.line}"/>
-<rect x="0" y="24" width="3" height="28" fill="${t.accent}"/>
-<text class="mono" x="24" y="34" font-size="11" letter-spacing="2" fill="${t.faint}">REPO / ${String(index + 1).padStart(2, '0')}</text>
-<path class="mark" pathLength="1" d="${lissajous(repo.name, W - 70, 18, 46)}" fill="none" stroke="${t.accent}" stroke-width="1.2" opacity="0.9"/>
-<text class="display" x="24" y="70" font-size="24" letter-spacing="-0.5" fill="${t.fg}">${esc(repo.name)}</text>
-${lines.map((line, i) => `<text class="sans" x="24" y="${100 + i * 21}" font-size="14" fill="${t.muted}">${esc(line)}</text>`).join('\n')}
-<path d="M24 ${H - 42}H${W - 24}" stroke="${t.line}"/>
-${bottom.join('\n')}
-<text class="mono" x="${W - 24}" y="${H - 19}" font-size="12" fill="${t.faint}" text-anchor="end">${updated}</text>
+<path d="M0.5 0.5H${W - 0.5}V${H - cut}L${W - cut} ${H - 0.5}H0.5Z" fill="${t.bg}" stroke="${t.strong}"/>
+<rect x="0" y="0" width="${r1(tabW)}" height="30" fill="${t.accent}"/>
+<text class="mono" x="13" y="20" font-size="13" font-weight="700" letter-spacing="2" fill="${t.onAccent}">${esc(tab)}</text>
+<text class="mono" x="${W - 16}" y="20" font-size="11" letter-spacing="1" fill="${t.faint}" text-anchor="end">CASE 0x${caseId}</text>
+${barcode(`case-${repo.name}`, W - 116, 28, 100, 10, t.faint)}
+<text class="display" x="20" y="84" font-size="34" letter-spacing="-0.5" fill="${t.fg}">${esc(repo.name)}</text>
+<text class="mono" x="22" y="108" font-size="11" letter-spacing="1" fill="${t.faint}">${esc(origin.toUpperCase())}</text>
+<g transform="rotate(-8 ${W - 20 - stampW / 2} 78)"><g class="stamp">
+  <rect x="${r1(W - 20 - stampW)}" y="60" width="${r1(stampW)}" height="34" fill="none" stroke="${t.alt}" stroke-width="2"/>
+  <text class="mono" x="${r1(W - 20 - stampW / 2)}" y="83" font-size="15" font-weight="800" letter-spacing="4" fill="${t.alt}" text-anchor="middle">${esc(channel.stamp)}</text>
+</g></g>
+${body}
+<path d="M22 ${H - 50}H${W - 22}" stroke="${t.line}"/>
+<g class="mono" font-size="11" letter-spacing="1">
+  <text x="22" y="${H - 24}" fill="${t.faint}">LANG <tspan fill="${t.muted}">${esc(repo.primaryLanguage?.name ?? '—')}</tspan></text>
+  <text x="170" y="${H - 24}" fill="${t.faint}">LAST <tspan fill="${t.muted}">${fmtDate(pushed)}</tspan></text>
+  <text x="${W - 40}" y="${H - 24}" fill="${active ? t.accent : t.faint}" text-anchor="end">${active ? '● ACTIVE' : '○ DORMANT'}</text>
+</g>
 </svg>
 `;
 }
 
-// ---------- 提交信号 ----------
+// ---------- 全年信号波形 ----------
 
-const LEVELS = { NONE: 0, FIRST_QUARTILE: 1, SECOND_QUARTILE: 2, THIRD_QUARTILE: 3, FOURTH_QUARTILE: 4 };
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
-function activity(calendar, theme) {
+function intercepts(calendar, theme) {
   const t = THEMES[theme];
   const W = 880;
-  const H = 256;
-  const CELL = 15;
-  const left = 46;
-  const top = 116;
-  const weeks = calendar.weeks.slice(-53);
-  const dots = [];
-  const months = [];
-  let lastMonth = -1;
-  let today = null;
-  weeks.forEach((week, wi) => {
-    for (const day of week.contributionDays) {
-      const date = new Date(`${day.date}T00:00:00Z`);
-      const wd = date.getUTCDay();
-      const x = left + wi * CELL + CELL / 2;
-      const y = top + wd * CELL + CELL / 2;
-      const level = LEVELS[day.contributionLevel] ?? 0;
-      const r = [1.3, 2.6, 3.6, 4.5, 5.4][level];
-      const fill = level === 4 ? t.accent : t.fg;
-      const opacity = [0.16, 0.4, 0.62, 0.85, 1][level];
-      dots.push(`<circle cx="${x}" cy="${y}" r="${r}" fill="${fill}" opacity="${opacity}"/>`);
-      today = { x, y };
-      if (wd === 0 && date.getUTCMonth() !== lastMonth && date.getUTCDate() <= 7) {
-        lastMonth = date.getUTCMonth();
-        months.push(`<text class="mono" x="${x - 5}" y="${top - 12}" font-size="11" fill="${t.faint}">${lastMonth + 1}月</text>`);
-      }
+  const H = 264;
+  const x0 = 40;
+  const x1 = W - 40;
+  const mid = 140;
+  const days = calendar.weeks.flatMap((w) => w.contributionDays).slice(-365);
+  const max = Math.max(1, ...days.map((d) => d.contributionCount));
+  const step = (x1 - x0) / (days.length - 1);
+  const quiet = [];
+  const loud = [];
+  const ticks = [];
+  days.forEach((day, i) => {
+    const x = r1(x0 + i * step);
+    const n = day.contributionCount;
+    if (n === 0) {
+      quiet.push(`M${x} ${mid - 1.5}V${mid + 1.5}`);
+    } else {
+      const k = Math.sqrt(n / max);
+      const h = r1(4 + 58 * k);
+      const hot = n >= max * 0.6;
+      loud.push(`<path d="M${x} ${r1(mid - h)}V${r1(mid + h)}" stroke="${hot ? t.accent : t.fg}" opacity="${hot ? 1 : r1(0.35 + 0.6 * k)}"/>`);
+    }
+    const date = new Date(`${day.date}T00:00:00Z`);
+    if (date.getUTCDate() === 1) {
+      ticks.push(`<path d="M${x} 214V222" stroke="${t.strong}"/><text x="${x + 4}" y="236">${MONTHS[date.getUTCMonth()]}</text>`);
     }
   });
-  const legend = [1.3, 2.6, 3.6, 4.5, 5.4]
-    .map((r, i) => `<circle cx="${W - 116 + i * 15}" cy="44" r="${r}" fill="${i === 4 ? t.accent : t.fg}" opacity="${[0.16, 0.4, 0.62, 0.85, 1][i]}"/>`)
-    .join('');
-  const total = calendar.totalContributions;
+  const last = [...days].reverse().find((d) => d.contributionCount > 0);
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="过去一年 ${total} 次提交">
-<style>${FONTS}${STYLE_BASE}
-  .now { animation: ping 2.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
-  @keyframes ping { from { transform: scale(0.6); opacity: 1; } to { transform: scale(2.2); opacity: 0; } }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="过去一年 ${calendar.totalContributions} 次提交">
+<style>${BASE}
+  .head { animation: head 9s linear infinite; }
+  .blink { animation: blink 1.2s steps(1, end) infinite; }
+  @keyframes head { from { transform: translateX(0); } to { transform: translateX(${x1 - x0}px); } }
+  @keyframes blink { 50% { opacity: 0; } }
 </style>
-<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="12" fill="${t.bg}" stroke="${t.line}"/>
-<rect x="28" y="33" width="8" height="8" fill="${t.accent}"/>
-<text class="mono" x="44" y="41" font-size="12" letter-spacing="2" fill="${t.muted}">SIGNAL / 365 DAYS</text>
-<text class="sans" x="28" y="70" font-size="15" fill="${t.fg}">过去一年 <tspan class="display" font-size="18" fill="${t.accent}">${total}</tspan> 次提交</text>
-<text class="mono" x="${W - 136}" y="48" font-size="11" fill="${t.faint}" text-anchor="end">少</text>
-${legend}
-<text class="mono" x="${W - 32}" y="48" font-size="11" fill="${t.faint}">多</text>
-${months.join('')}
-${['一', '三', '五'].map((d, i) => `<text class="sans" x="26" y="${top + (1 + i * 2) * CELL + CELL / 2 + 4}" font-size="10" fill="${t.faint}">${d}</text>`).join('')}
-${dots.join('')}
-${today ? `<circle class="now" cx="${today.x}" cy="${today.y}" r="6" fill="none" stroke="${t.accent}" stroke-width="1.2"/>` : ''}
-<text class="mono" x="${W - 28}" y="${H - 22}" font-size="11" fill="${t.faint}" text-anchor="end">updated ${fmtDate(new Date())}</text>
+<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" fill="${t.bg}" stroke="${t.strong}"/>
+<rect x="${x0}" y="27" width="10" height="10" fill="${t.accent}"/>
+<text class="mono" x="${x0 + 18}" y="37" font-size="13" letter-spacing="2" fill="${t.muted}">INTERCEPTS // 365D</text>
+<text class="mono" x="${x1}" y="37" font-size="12" letter-spacing="1" fill="${t.faint}" text-anchor="end">${calendar.totalContributions} SIGNALS · PEAK ${max}/D · LAST ${last ? last.date.replaceAll('-', '.') : '—'}</text>
+<path d="M${x0} ${mid}H${x1}" stroke="${t.line}"/>
+<path d="${quiet.join('')}" stroke="${t.faint}" stroke-width="1.2"/>
+<g stroke-width="1.6">${loud.join('')}</g>
+<g class="mono" font-size="11" letter-spacing="1" fill="${t.faint}">${ticks.join('')}</g>
+<path d="M${x0} 214H${x1}" stroke="${t.line}"/>
+<g class="head"><path d="M${x0} 66V214" stroke="${t.alt}" opacity="0.75"/><rect x="${x0 - 3}" y="62" width="6" height="6" fill="${t.alt}"/></g>
+<circle class="blink" cx="${x1}" cy="${mid}" r="4" fill="${t.accent}"/>
+<text class="mono" x="${x1}" y="${H - 10}" font-size="10" letter-spacing="1" fill="${t.faint}" text-anchor="end">SYNC ${fmtDate(new Date())}</text>
 </svg>
 `;
 }
@@ -373,11 +329,11 @@ ${today ? `<circle class="now" cx="${today.x}" cy="${today.y}" r="6" fill="none"
 // ---------- 数据 ----------
 
 async function github(token) {
-  const repos = FEATURED.map(
-    (name, i) =>
-      `r${i}: repository(owner: "${USER}", name: "${name}") { name description url stargazerCount pushedAt primaryLanguage { name color } }`,
+  const repos = CHANNELS.map(
+    ({ repo }, i) =>
+      `r${i}: repository(owner: "${USER}", name: "${repo}") { name description url isFork parent { nameWithOwner } pushedAt primaryLanguage { name } }`,
   ).join('\n');
-  const query = `query { user(login: "${USER}") { contributionsCollection { contributionCalendar { totalContributions weeks { contributionDays { date contributionCount contributionLevel } } } } } ${repos} }`;
+  const query = `query { user(login: "${USER}") { contributionsCollection { contributionCalendar { totalContributions weeks { contributionDays { date contributionCount } } } } } ${repos} }`;
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
     headers: { Authorization: `bearer ${token}`, 'Content-Type': 'application/json', 'User-Agent': 'elv-hack-profile' },
@@ -387,7 +343,7 @@ async function github(token) {
   if (!res.ok || json.errors) throw new Error(JSON.stringify(json.errors ?? json));
   return {
     calendar: json.data.user.contributionsCollection.contributionCalendar,
-    repos: FEATURED.map((_, i) => json.data[`r${i}`]).filter(Boolean),
+    repos: CHANNELS.map((_, i) => json.data[`r${i}`]),
   };
 }
 
@@ -396,10 +352,10 @@ async function posts() {
   if (!res.ok) throw new Error(`rss ${res.status}`);
   const xml = await res.text();
   const pick = (item, tag) => item.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`))?.[1].trim() ?? '';
-  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+  const all = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
     .map(([, item]) => ({ title: pick(item, 'title'), link: pick(item, 'link'), date: new Date(pick(item, 'pubDate')), description: pick(item, 'description') }))
-    .sort((a, b) => b.date - a.date)
-    .slice(0, POSTS);
+    .sort((a, b) => b.date - a.date);
+  return all.slice(0, POSTS).map((post, i) => ({ ...post, tx: all.length - i }));
 }
 
 // ---------- README ----------
@@ -423,9 +379,9 @@ let readme = readFileSync(readmePath, 'utf8');
 try {
   const list = await posts();
   const body = list
-    .map((p) => `- \`${fmtDate(p.date)}\` **[${p.title}](${p.link})**<br><sub>${p.description}</sub>`)
+    .map((p) => `- \`TX/${String(p.tx).padStart(3, '0')}\` **[${p.title}](${p.link})** \`${fmtDate(p.date)}\`<br><sub>${p.description}</sub>`)
     .join('\n');
-  readme = replaceBlock(readme, 'posts', `${body}\n\n<sub>→ 全部文章在 [elvhack.com/posts](${SITE}/posts/)，也可以 [订阅 RSS](${SITE}/rss.xml)。</sub>`);
+  readme = replaceBlock(readme, 'posts', `${body}\n\n<sub>全部文章 → [elvhack.com/posts](${SITE}/posts/) · [RSS](${SITE}/rss.xml)</sub>`);
   console.log(`posts: ${list.length}`);
 } catch (error) {
   console.warn('跳过文章列表：', error.message);
@@ -435,29 +391,29 @@ const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 if (token) {
   try {
     const { calendar, repos } = await github(token);
-    for (const theme of Object.keys(THEMES)) {
-      write(`assets/activity-${theme}.svg`, activity(calendar, theme));
-      repos.forEach((repo, i) => write(`assets/repo-${repo.name}-${theme}.svg`, repoCard(repo, i, theme)));
-    }
+    const cards = [];
+    CHANNELS.forEach((channel, i) => {
+      const repo = repos[i];
+      if (!repo) return console.warn(`找不到仓库 ${channel.repo}，跳过`);
+      const name = `channel-${channel.code.toLowerCase()}`;
+      for (const theme of Object.keys(THEMES)) write(`assets/${name}-${theme}.svg`, dossier(channel, repo, i, theme));
+      cards.push(`<a href="${repo.url}">${picture(name, `${channel.code}：${repo.name}`, ' width="49%"')}</a>`);
+    });
+    for (const theme of Object.keys(THEMES)) write(`assets/intercepts-${theme}.svg`, intercepts(calendar, theme));
     // GitHub 会把行内图片之间的换行变成 <br>，所以同一行的两张卡片写在一行里
-    const cardHtml = repos.map(
-      (repo) => `<a href="${repo.url}">${picture(`repo-${repo.name}`, `${repo.name}：${repo.description ?? ''}`, ' width="49%"')}</a>`,
-    );
-    const cards = cardHtml
-      .map((html, i) => (i % 2 ? `&nbsp;${html}` : html))
-      .reduce((rows, html, i) => (i % 2 ? rows.with(-1, rows.at(-1) + html) : [...rows, html]), [])
-      .join('\n');
-    readme = replaceBlock(readme, 'repos', cards);
+    const rows = [];
+    for (let i = 0; i < cards.length; i += 2) rows.push(cards.slice(i, i + 2).join('&nbsp;'));
+    readme = replaceBlock(readme, 'channels', rows.join('\n'));
     readme = replaceBlock(
       readme,
-      'activity',
-      `<a href="https://github.com/${USER}">${picture('activity', `过去一年 ${calendar.totalContributions} 次提交`, ' width="100%"')}</a>`,
+      'intercepts',
+      `<a href="https://github.com/${USER}">${picture('intercepts', `过去一年 ${calendar.totalContributions} 次提交`, ' width="100%"')}</a>`,
     );
   } catch (error) {
     console.warn('跳过 GitHub 数据：', error.message);
   }
 } else {
-  console.warn('没有 GITHUB_TOKEN / GH_TOKEN，跳过仓库卡片和提交信号');
+  console.warn('没有 GITHUB_TOKEN / GH_TOKEN，跳过频道卡片和信号波形');
 }
 
-if (existsSync(readmePath)) writeFileSync(readmePath, readme);
+writeFileSync(readmePath, readme);
