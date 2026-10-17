@@ -1,0 +1,34 @@
+name: refresh
+
+on:
+  schedule:
+    - cron: '17 18 * * *' # 北京时间每天 02:17
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['scripts/**', 'README.md', '.github/workflows/refresh.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成 SVG、刷新 README
+        run: node scripts/build.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 有变化就提交
+        run: |
+          git add -A
+          git diff --cached --quiet && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: refresh profile'
+          git push
