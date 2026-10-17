@@ -9,5 +9,5 @@
   "preview_urls": false,
   "routes": [{ "pattern": "signal.elvhack.com", "custom_domain": true }],
   "rules": [{ "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }],
-  "d1_databases": [{ "binding": "DB", "database_name": "elvhack-signal", "database_id": "00000000-0000-0000-0000-000000000000" }]
+  "d1_databases": [{ "binding": "DB", "database_name": "elvhack-signal", "database_id": "3e7578dc-75e2-4433-a34a-e6aab9587c35" }]
 }
