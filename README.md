@@ -67,7 +67,7 @@
 ### INTERCEPTS
 
 <!-- intercepts:start -->
-<a href="https://github.com/elv-hack"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/intercepts-dark.svg"><img src="assets/intercepts-light.svg" alt="过去一年 66 次提交" width="100%"></picture></a>
+<a href="https://github.com/elv-hack"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/intercepts-dark.svg"><img src="assets/intercepts-light.svg" alt="过去一年 69 次提交" width="100%"></picture></a>
 <!-- intercepts:end -->
 
 <p align="right"><sub><code>EOF</code> · 头图、卷宗和波形由 <a href="scripts/build.mjs">scripts/build.mjs</a> 生成，信号台由 <a href="worker/src/index.js">worker/</a> 实时生成</sub></p>
