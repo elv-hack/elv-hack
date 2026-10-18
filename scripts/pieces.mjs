@@ -4,6 +4,7 @@
  */
 import { ABYSS as C, dataTunnel, dotGrid, flowGradient } from './abyss.mjs';
 import { DIRS, MAP, cell, minimap, view } from './dive.mjs';
+import { FACES, faceLayer, slotFade } from './face.mjs';
 import { FORM_CSS, knotFrames, lissajousFrames, roseStack, solidFrames, sphereRings, spinForm, torus, wire } from './forms.mjs';
 import { esc, r1, rng } from './lib.mjs';
 
@@ -309,25 +310,41 @@ export function yearPanel({ days, total, fonts }) {
 
 // ---------- 片头 ----------
 
-export function headerPanel({ faceGroups, faceCss, fonts }) {
+export function headerPanel({ faces, order = [0, 1, 2], fonts }) {
   const W = 1200;
   const H = 620;
-  const tunnel = dataTunnel({ uid: 'tn', W, H, cx: 850, cy: 300, layers: 10, dur: 34 });
+  const tunnel = dataTunnel({ uid: 'tn', W, H, cx: 850, cy: 300, layers: 7, dur: 34 });
+  const face = faceLayer({ faces, order, size: 5.8, cx: 850, cy: 306 });
+  const n = order.length;
+  // 跟着当前那张图切换的编号、图注和指示条
+  const per = (fi, fn) => fn(order.indexOf(fi));
+  const fade = (j) => slotFade(j, n, face.hold, face.wipe);
+  const numbers = FACES.map((f, fi) => per(fi, (j) => `<text class="mono" x="150" y="137" font-size="${FONT_SIZE.small}" fill="${C.mid}" letter-spacing="1.2" opacity="0">N° ${String(fi + 1).padStart(2, '0')} / ${String(FACES.length).padStart(2, '0')}${fade(j)}</text>`)).join('');
+  const notes = FACES.map((f, fi) => per(fi, (j) => `<text class="mono" x="72" y="${H - 46}" font-size="${FONT_SIZE.small}" fill="${C.mid}" letter-spacing="1.2" opacity="0">fig. ${fi + 1} — ${esc(f.name)} · ${esc(f.note)}${fade(j)}</text>`)).join('');
+  const bars = FACES.map((f, fi) => {
+    const x = 72 + fi * 22;
+    return `<rect x="${x}" y="132" width="18" height="2" fill="${C.faint}"/>${per(fi, (j) => `<rect x="${x}" y="132" width="18" height="2" fill="${f.accent}" opacity="0">${fade(j)}</rect>`)}`;
+  }).join('');
+  // 肖像底下压一层暗色，背景隧道里的十六进制字不会和肖像的字符搅在一起
+  const hush = `<radialGradient id="hd-hush" cx="0.5" cy="0.5" r="0.5"><stop offset="0.35" stop-color="${C.bg}" stop-opacity="0.82"/><stop offset="1" stop-color="${C.bg}" stop-opacity="0"/></radialGradient>
+  <ellipse cx="850" cy="306" rx="360" ry="330" fill="url(#hd-hush)"/>`;
   const body = `
   ${tunnel.body}
   <radialGradient id="hd-glow" cx="0.7" cy="0.48" r="0.4"><stop offset="0" stop-color="${C.indigo}" stop-opacity="0.12"/><stop offset="1" stop-color="${C.indigo}" stop-opacity="0"/></radialGradient>
   <rect width="${W}" height="${H}" fill="url(#hd-glow)"/>
-  ${faceGroups}
+  ${hush}
+  ${face.body}
   <g class="fade">
     <text class="display" x="72" y="104" font-size="28" font-weight="500" fill="${C.ink}" letter-spacing="-0.5">elvhack</text>
-    <text class="mono" x="${W - 72}" y="100" font-size="${FONT_SIZE.small}" fill="${C.mid}" text-anchor="end" letter-spacing="1.2">N° 01</text>
-    <text class="mono" x="72" y="${H - 132}" font-size="${FONT_SIZE.caption}" fill="${C.ink}" letter-spacing="1.2">quant / security / development / intelligence</text>
-    <text class="mono" x="72" y="${H - 110}" font-size="${FONT_SIZE.caption}" fill="${C.mid}" letter-spacing="1.2">depth — unbounded</text>
-    <text class="mono" x="72" y="${H - 92}" font-size="${FONT_SIZE.caption}" fill="${C.mid}" letter-spacing="1.2">elvhack.com</text>
-    <rect x="72" y="${H - 74}" width="24" height="2" fill="url(#head-flow)"/>
-    <text class="mono" x="${W - 72}" y="${H - 64}" font-size="${FONT_SIZE.small}" fill="${C.mid}" text-anchor="end" letter-spacing="1.2">fig. 1 — a face made of glyphs, surfacing from the data</text>
+    ${bars}
+    ${numbers}
+    <text class="mono" x="72" y="${H - 140}" font-size="${FONT_SIZE.caption}" fill="${C.ink}" letter-spacing="1.2">quant / security / development / intelligence</text>
+    <text class="mono" x="72" y="${H - 118}" font-size="${FONT_SIZE.caption}" fill="${C.mid}" letter-spacing="1.2">depth — unbounded</text>
+    <text class="mono" x="72" y="${H - 100}" font-size="${FONT_SIZE.caption}" fill="${C.mid}" letter-spacing="1.2">elvhack.com</text>
+    <rect x="72" y="${H - 82}" width="24" height="2" fill="url(#head-flow)"/>
+    ${notes}
   </g>`;
-  return panel({ W, H, uid: 'head', body, css: `${tunnel.css}${faceCss}`, fonts });
+  return panel({ W, H, uid: 'head', body, css: `${tunnel.css}${face.css}`, fonts });
 }
 
 // ---------- 按钮 ----------
@@ -339,16 +356,22 @@ const GLYPHS = {
   right: 'M-9 0H9M3 -6L9 0L3 6',
   back: 'M6 -6A8 8 0 1 0 8 2M8 -7V-1H2',
   draw: 'M0 -9L8 0L0 9L-8 0Z',
+  // 片头的三张肖像：罗马数字 I / II / III
+  ghost: 'M0 -8V8',
+  crimson: 'M-3.5 -8V8M3.5 -8V8',
+  phantom: 'M-7 -8V8M0 -8V8M7 -8V8',
 };
 
-export function buttonPanel({ glyph, label, sub, count, fonts, w = 280 }) {
+/** accent 换掉按钮的渐变色；active 表示它是现在显示的那一项（片头的肖像） */
+export function buttonPanel({ glyph, label, sub, count, fonts, w = 280, accent, active = false }) {
   const H = 72;
+  const ink = accent ?? 'url(#btn-flow)';
   const body = `
-  <g transform="translate(36 36)"><path d="${GLYPHS[glyph]}" fill="none" stroke="url(#btn-flow)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g transform="translate(36 36)"><path d="${GLYPHS[glyph]}" fill="none" stroke="${ink}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
   <text class="mono" x="66" y="33" font-size="13" fill="${C.ink}" letter-spacing="1">${esc(label)}</text>
-  <text class="mono" x="66" y="52" font-size="${FONT_SIZE.small}" fill="${C.mid}" letter-spacing="1">${esc(sub)}</text>
+  ${active ? `<circle cx="70" cy="48.5" r="3" fill="${ink}"/>` : ''}<text class="mono" x="${active ? 80 : 66}" y="52" font-size="${FONT_SIZE.small}" fill="${active ? C.ink : C.mid}" letter-spacing="1">${esc(sub)}</text>
   ${count != null ? `<text class="mono" x="${w - 22}" y="33" font-size="${FONT_SIZE.small}" fill="${C.mid}" text-anchor="end" letter-spacing="1">${String(count).padStart(4, '0')}</text>` : ''}
-  <rect class="sweep" x="0" y="${H - 2}" width="60" height="2" fill="url(#btn-flow)"/>`;
+  <rect class="sweep" x="0" y="${H - 2}" width="60" height="2" fill="${ink}"/>`;
   const css = `.sweep { animation: sweep 4s cubic-bezier(0.6, 0, 0.4, 1) infinite; } @keyframes sweep { from { transform: translateX(-60px); } to { transform: translateX(${w}px); } }`;
   return panel({ W: w, H, uid: 'btn', body, css, fonts }).replace('<rect width="' + w + '" height="' + H + '" fill="url(#btn-vig)" pointer-events="none"/>', '');
 }

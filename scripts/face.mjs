@@ -1,190 +1,151 @@
 /**
- * 原创的 ASCII 人脸：在代码里用有向距离场（SDF）搭一个 3D 头像（短发、义体质感），
- * 光线步进算出每个字符格的明暗，再按亮度映射成字符。头像缓慢左右转动，逐帧预先算好。
- * 不是任何现有角色。
+ * 片头的 ASCII 肖像：三张图的字符帧由 scripts/faces-from-images.py 预先转换好（scripts/faces.json），
+ * 由调用方读进来传给 faceLayer（Worker 直接 import，Node 脚本用 readFileSync）。
+ *
+ * - 每张图自己往返转头：frames 帧从左转到右再转回来，每帧一组 <text>（CSS 逐帧切换 visibility）。
+ * - 三张图轮流浮现：交接时一道扫描线从上往下扫过，线以上是新的图、线以下还是旧的（SMIL 遮罩）；
+ *   不在画面上的图 display: none。这张图是 GitHub 用 <img> 显示的，每一帧都要整张重画，画得越少越流畅。
+ * - order 决定先后：Worker 把访客选中的那张排在最前面，页面一打开就是它从数据里解码出来。
  */
+import { flowGradient } from './abyss.mjs';
+import { rng } from './lib.mjs';
+
+/** 三张图：主色（渐变里流转的几个色相）、强调色（高光）、图注 */
+export const FACES = [
+  { id: 'ghost', name: 'ghost', hues: ['#b9a8ff', '#8a96ff', '#dcb3ff', '#9fe6f0'], accent: '#ff5468', note: 'line and violet, surfacing from the data' },
+  { id: 'crimson', name: 'crimson', hues: ['#ff7d93', '#e98ae9', '#ffa47f', '#ff6f8a'], accent: '#ffd6dc', note: 'a red signal, half in shadow' },
+  { id: 'phantom', name: 'phantom', hues: ['#c6d4e4', '#9aa8ff', '#7fe3dc', '#e6ecf5'], accent: '#ff8a4a', note: 'after key art © Konami Digital Entertainment' },
+];
 
 const RAMP = " .'`,:;-~=+*o%#&@";
-
-const v3 = {
-  add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-  sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
-  mul: (a, k) => [a[0] * k, a[1] * k, a[2] * k],
-  dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
-  len: (a) => Math.hypot(a[0], a[1], a[2]),
-  norm: (a) => {
-    const l = Math.hypot(a[0], a[1], a[2]) || 1;
-    return [a[0] / l, a[1] / l, a[2] / l];
-  },
-};
-
-// 椭球的近似距离
-const ellipsoid = (p, c, r) => {
-  const q = [(p[0] - c[0]) / r[0], (p[1] - c[1]) / r[1], (p[2] - c[2]) / r[2]];
-  const k0 = Math.hypot(...q);
-  const k1 = Math.hypot(q[0] / r[0], q[1] / r[1], q[2] / r[2]);
-  return k1 ? (k0 * (k0 - 1)) / k1 : -1;
-};
-const smin = (a, b, k) => {
-  const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - a)) / k));
-  return b * (1 - h) + a * h - k * h * (1 - h);
-};
-const smax = (a, b, k) => -smin(-a, -b, k);
-
-/** 场景：返回 [距离, 材质]；材质 0 皮肤，1 头发，2 眼睛，3 接缝 */
-function scene(p) {
-  const x = Math.abs(p[0]);
-  const sym = [x, p[1], p[2]];
-  // 头和下巴
-  let skin = ellipsoid(p, [0, 0.12, 0], [0.6, 0.8, 0.66]);
-  skin = smin(skin, ellipsoid(p, [0, -0.42, 0.06], [0.38, 0.4, 0.44]), 0.18);
-  // 颧骨、鼻子、嘴唇
-  skin = smin(skin, ellipsoid(sym, [0.3, -0.1, 0.38], [0.18, 0.12, 0.16]), 0.12);
-  skin = smin(skin, ellipsoid(p, [0, -0.06, 0.6], [0.06, 0.2, 0.1]), 0.06);
-  skin = smin(skin, ellipsoid(p, [0, -0.4, 0.56], [0.15, 0.05, 0.08]), 0.04);
-  skin = smax(skin, -ellipsoid(p, [0, -0.415, 0.64], [0.13, 0.008, 0.05]), 0.01); // 唇缝
-  // 眼窝
-  skin = smax(skin, -ellipsoid(sym, [0.23, 0.13, 0.6], [0.13, 0.07, 0.1]), 0.05);
-  // 脖子
-  const neck = Math.max(Math.hypot(p[0], p[2] - 0.02) - 0.24, p[1] + 0.55, -(p[1] + 1.4));
-  skin = smin(skin, neck, 0.1);
-  // 眼球
-  const eye = Math.hypot(sym[0] - 0.23, sym[1] - 0.12, sym[2] - 0.5) - 0.085;
-  // 头发：齐耳短发 = 略大的头 − 脸部开口，前面留一排刘海
-  let hair = ellipsoid(p, [0, 0.2, -0.06], [0.68, 0.84, 0.72]);
-  const faceCut = Math.max(-(p[2] - 0.18), p[1] - 0.36 + 0.12 * Math.cos(p[0] * 9) * 0.3, x - 0.52);
-  hair = smax(hair, -faceCut, 0.04);
-  hair = Math.max(hair, -(p[1] + 0.34 + 0.06 * x)); // 发尾齐在下颌附近
-  // 侧面的义体接缝：一条细凹槽
-  const seam = Math.abs(ellipsoid(sym, [0.36, -0.12, 0.36], [0.2, 0.26, 0.3])) - 0.004;
-  let best = [skin, 0];
-  if (hair < best[0]) best = [hair, 1];
-  if (eye < best[0]) best = [eye, 2];
-  if (seam < 0.003 && skin < 0.01 && best[1] === 0) best = [skin, 3];
-  return best;
-}
-
-const dist = (p) => scene(p)[0];
-function normal(p) {
-  const e = 0.003;
-  return v3.norm([
-    dist([p[0] + e, p[1], p[2]]) - dist([p[0] - e, p[1], p[2]]),
-    dist([p[0], p[1] + e, p[2]]) - dist([p[0], p[1] - e, p[2]]),
-    dist([p[0], p[1], p[2] + e]) - dist([p[0], p[1], p[2] - e]),
-  ]);
-}
-
-/**
- * 渲染一帧：cols × rows 个字符，yaw 是头转动的角度（弧度）。
- * 返回 rows 行字符串，以及每个字符的材质（用来上不同的颜色）。
- */
-export function faceFrame({ cols = 72, rows = 40, yaw = 0, pitch = 0.04 }) {
-  const lines = [];
-  const mats = [];
-  const light = v3.norm([-0.55, 0.6, 0.75]);
-  const rim = v3.norm([0.8, 0.2, -0.4]);
-  const cy = Math.cos(yaw);
-  const sy = Math.sin(yaw);
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-  // 把世界坐标转到头的局部坐标（头在转）
-  const toLocal = (p) => {
-    let [x, y, z] = p;
-    [y, z] = [y * cp - z * sp, y * sp + z * cp];
-    return [x * cy - z * sy, y, x * sy + z * cy];
-  };
-  const aspect = 0.55; // 字符宽高比
-  for (let r = 0; r < rows; r++) {
-    let line = '';
-    const mrow = [];
-    for (let c = 0; c < cols; c++) {
-      const u = ((c + 0.5) / cols - 0.5) * 2.2;
-      const v = -((r + 0.5) / rows - 0.5) * 2.2 * (rows / cols / aspect);
-      const ro = [u, v + 0.05, 3];
-      const rd = [0, 0, -1];
-      let t = 1.2;
-      let hit = -1;
-      let mat = 0;
-      for (let i = 0; i < 70; i++) {
-        const p = toLocal(v3.add(ro, v3.mul(rd, t)));
-        const [d, m] = scene(p);
-        if (d < 0.002) {
-          hit = t;
-          mat = m;
-          break;
-        }
-        t += d * 0.9;
-        if (t > 5) break;
-      }
-      if (hit < 0) {
-        line += ' ';
-        mrow.push(-1);
-        continue;
-      }
-      const pl = toLocal(v3.add(ro, v3.mul(rd, hit)));
-      const nl = normal(pl);
-      // 法线转回世界坐标
-      const n = [nl[0] * cy + nl[2] * sy, nl[1], -nl[0] * sy + nl[2] * cy];
-      let lum = 0.12 + 0.75 * Math.max(0, v3.dot(n, light)) + 0.35 * Math.pow(Math.max(0, v3.dot(n, rim)), 2);
-      if (mat === 1) lum *= 0.75;
-      if (mat === 2) lum = 0.95;
-      if (mat === 3) lum = 0.6;
-      lum = Math.max(0, Math.min(0.999, lum));
-      line += RAMP[1 + Math.floor(lum * (RAMP.length - 1))] ?? '@';
-      mrow.push(mat);
-    }
-    lines.push(line);
-    mats.push(mrow);
-  }
-  return { lines, mats };
-}
-
 const escText = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const rr = (n) => Math.round(n * 10) / 10;
+const kt = (n) => Math.round(n * 10000) / 10000;
 
-/**
- * 整张会转头的脸：frames 帧从左转到右再转回来（往返），每帧一组 <text>。
- * fill 是脸的颜色（可以是渐变），eye 是眼睛的颜色。返回 { body, css }，以 (cx, cy) 为中心。
- */
-export function faceLayer({ cols = 92, rows = 52, size = 10, cx, cy, frames = 12, step = 0.32, swing = 0.36, fill, eye }) {
+/** 一张图所有帧的 <text>（只跟图和字号有关，算一次就缓存，Worker 里每个请求不用重算） */
+const cache = new Map();
+function portraitFrames(p, size) {
+  const key = `${p.id}@${size}`;
+  if (cache.has(key)) return cache.get(key);
   const charW = size * 0.6;
   const lineH = size * 1.02;
-  const yaws = Array.from({ length: frames }, (_, i) => -swing + (2 * swing * i) / (frames - 1));
+  const groups = p.frames.map((fr, i) => {
+    // 行首的空格换成 x 偏移，行尾的空格去掉：图小一点
+    const text = fr.lines
+      .map((ln, r) => {
+        const t = ln.trimEnd();
+        const body = t.trimStart();
+        return body ? `<text x="${rr((t.length - body.length) * charW)}" y="${rr(r * lineH)}" xml:space="preserve">${escText(body)}</text>` : '';
+      })
+      .join('');
+    const acc = fr.acc.map(([r, a, b]) => `<text x="${rr(a * charW)}" y="${rr(r * lineH)}">${escText(fr.lines[r].slice(a, b))}</text>`).join('');
+    return `<g class="fr${i}">${text}<g fill="${FACES.find((f) => f.id === p.id).accent}">${acc}</g></g>`;
+  });
+  const out = { body: groups.join(''), w: p.cols * charW, h: p.rows * lineH };
+  cache.set(key, out);
+  return out;
+}
+
+/**
+ * 每张图在轮播里的出现时间：第 j 个出场，从 j·hold 秒开始，擦入 wipe 秒，停留到下一张擦入时被擦掉。
+ * 返回 SMIL 动画需要的 begin / dur / keyTimes，hidden / shown 两个值之间切换。
+ */
+export function slotTiming(j, n, hold, wipe) {
+  const C = n * hold;
+  return {
+    begin: `${rr(j * hold)}s`,
+    dur: `${rr(C)}s`,
+    keyTimes: `0;${kt(wipe / C)};${kt(hold / C)};${kt((hold + wipe) / C)};1`,
+    splines: '0.65 0 0.35 1;0 0 1 1;0.65 0 0.35 1;0 0 1 1',
+  };
+}
+
+/**
+ * 在轮播里跟着第 j 张图出现的属性动画（图注、编号、指示条用）。
+ * 文字不能叠在一起，所以旧的在擦除的前半段淡出，新的在后半段淡入。
+ */
+export function slotFade(j, n, hold, wipe, attr = 'opacity') {
+  const C = n * hold;
+  const half = wipe / 2;
+  return `<animate attributeName="${attr}" values="0;0;1;1;0;0" keyTimes="0;${kt(half / C)};${kt(wipe / C)};${kt(hold / C)};${kt((hold + half) / C)};1" begin="${rr(j * hold)}s" dur="${rr(C)}s" repeatCount="indefinite"/>`;
+}
+
+/**
+ * 整个肖像层。faces 是 faces.json 里的 portraits，order 是出场顺序（FACES 里的下标）。
+ * 返回 { body, css }，所有图以 (cx, cy) 为中心、高度相同。
+ */
+export function faceLayer({ faces, order = [0, 1, 2], size = 7.2, cx, cy, step = 0.32, hold = 13, wipe = 2.4 }) {
+  const n = order.length;
+  const frames = faces[0].frames.length;
+  const lineH = size * 1.02;
+  const A = faces[0].rows * lineH;
+  const y0 = cy - A / 2;
+  const e = 36; // 扫描线的软边
+  const maxW = Math.max(...faces.map((p) => p.cols * size * 0.6));
+
+  // 转头：和以前一样，每帧在往返序列里出现的时刻显示，其余时间隐藏。
+  // 用 visibility 而不是 opacity：opacity 为 0 的帧浏览器每一帧照样要画，visibility: hidden 的才会跳过
   const seq = [...Array(frames).keys(), ...Array.from({ length: frames - 2 }, (_, i) => frames - 2 - i)];
   const cycle = seq.length * step;
   const pct = (t) => rr((t / cycle) * 100);
   const css = [];
-  const groups = yaws.map((yaw, i) => {
-    const fr = faceFrame({ cols, rows, yaw });
-    const times = seq.map((s, k) => (s === i ? k : -1)).filter((k) => k >= 0);
-    const kf = ['0% { opacity: 0; }'];
-    for (const k of times) kf.push(`${pct(k * step)}% { opacity: 1; }`, `${pct((k + 1) * step)}% { opacity: 0; }`);
-    css.push(`.fr${i} { opacity: 0; animation: fr${i} ${rr(cycle)}s steps(1, end) infinite; } @keyframes fr${i} { ${kf.join(' ')} }`);
-    const text = fr.lines.map((ln, r) => `<text y="${rr(r * lineH)}" xml:space="preserve">${escText(ln.replace(/\s+$/, ''))}</text>`).join('');
-    const eyes = [];
-    fr.mats.forEach((m, r) => {
-      let run = '';
-      let start = -1;
-      for (let k = 0; k <= m.length; k++) {
-        if (m[k] === 2) {
-          if (start < 0) start = k;
-          run += fr.lines[r][k];
-        } else if (start >= 0) {
-          eyes.push(`<text x="${rr(start * charW)}" y="${rr(r * lineH)}">${escText(run)}</text>`);
-          run = '';
-          start = -1;
-        }
-      }
-    });
-    return `<g class="fr${i}"><g fill="${fill}">${text}</g><g fill="${eye}">${eyes.join('')}</g></g>`;
+  for (let i = 0; i < frames; i++) {
+    const kf = ['0% { visibility: hidden; }'];
+    seq.forEach((s, k) => s === i && kf.push(`${pct(k * step)}% { visibility: visible; }`, `${pct((k + 1) * step)}% { visibility: hidden; }`));
+    css.push(`.fr${i} { visibility: hidden; animation: fr${i} ${rr(cycle)}s steps(1, end) infinite; } @keyframes fr${i} { ${kf.join(' ')} }`);
+  }
+  // 不要动画的时候停在正脸那一帧
+  css.push(`@media (prefers-reduced-motion: reduce) { .fr${Math.floor(frames / 2)} { visibility: visible; } }`);
+
+  // 擦除遮罩：一条比图高 2e 的白带，上下两端是软边。藏在图上方 → 下移盖住整张图 → 再下移到图下方
+  const yA = y0 - A - 2 * e;
+  const yH = y0 - e;
+  const yB = y0 + A;
+  const defs = [
+    `<linearGradient id="wipeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="${kt(e / (A + 2 * e))}" stop-color="#fff"/><stop offset="${kt(1 - e / (A + 2 * e))}" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>`,
+    `<linearGradient id="bandG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#dfe6f2" stop-opacity="0"/><stop offset="0.5" stop-color="#dfe6f2"/><stop offset="1" stop-color="#dfe6f2" stop-opacity="0"/></linearGradient>`,
+    `<radialGradient id="beamG" cx="0.5" cy="1" r="0.5"><stop offset="0" stop-color="#dfe6f2" stop-opacity="0.12"/><stop offset="1" stop-color="#dfe6f2" stop-opacity="0"/></radialGradient>`,
+  ];
+  const layers = order.map((fi, j) => {
+    const meta = FACES[fi];
+    const p = faces.find((f) => f.id === meta.id);
+    const pf = portraitFrames(p, size);
+    const t = slotTiming(j, n, hold, wipe);
+    const C = n * hold;
+    defs.push(
+      flowGradient(`pf-${p.id}`, { x1: 0, y1: 0, x2: rr(pf.w), y2: rr(pf.h), dur: 24, hues: meta.hues, units: 'userSpaceOnUse' }),
+      `<mask id="wipe${j}" maskUnits="userSpaceOnUse" x="0" y="0" width="1200" height="${rr(cy * 2 + 40)}"><rect x="0" y="${rr(yA)}" width="1200" height="${rr(A + 2 * e)}" fill="url(#wipeG)"><animate attributeName="y" values="${rr(yA)};${rr(yH)};${rr(yH)};${rr(yB)};${rr(yB)}" keyTimes="${t.keyTimes}" calcMode="spline" keySplines="${t.splines}" begin="${t.begin}" dur="${t.dur}" repeatCount="indefinite"/></rect></mask>`,
+    );
+    // 不在画面上的图整组 display: none，浏览器就不用每一帧都画它
+    return `<g mask="url(#wipe${j})" display="none"><animate attributeName="display" values="inline;none" keyTimes="0;${kt((hold + wipe) / C)}" calcMode="discrete" begin="${t.begin}" dur="${t.dur}" repeatCount="indefinite"/><g transform="translate(${rr(cx - pf.w / 2)} ${rr(y0)})" fill="url(#pf-${p.id})">${pf.body}</g></g>`;
   });
-  const x = cx - (cols * charW) / 2;
-  const y = cy - (rows * lineH) / 2;
-  const body = `<defs><radialGradient id="faceMaskG" cx="0.5" cy="0.45" r="0.55"><stop offset="0.55" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
-    <mask id="faceMask" maskContentUnits="objectBoundingBox"><rect width="1" height="1" fill="url(#faceMaskG)"/></mask></defs>
-    <g class="breathe" mask="url(#faceMask)"><g class="mono" font-size="${size}" transform="translate(${rr(x)} ${rr(y)})">${groups.join('')}</g></g>`;
+
+  // 扫描线：跟着擦除的分界线走，线上方有两行一闪一闪的乱码，像正在改写的数据
+  const rand = rng('scan');
+  const noise = (k) =>
+    [0, 1]
+      .map((r) => {
+        const cols = Math.floor(maxW / (size * 0.6));
+        let s = '';
+        for (let c = 0; c < cols; c++) s += rand() < 0.55 ? RAMP[1 + Math.floor(rand() * (RAMP.length - 1))] : ' ';
+        return `<text x="${rr(cx - maxW / 2)}" y="${rr(-4 - r * lineH)}" xml:space="preserve" opacity="${r ? 0.45 : 0.9}">${escText(s)}</text>`;
+      })
+      .join('') + `<animate attributeName="opacity" values="${k === 0 ? '1;0;0;1' : k === 1 ? '0;1;0;0' : '0;0;1;0'}" keyTimes="0;0.333;0.667;1" calcMode="discrete" dur="0.36s" repeatCount="indefinite"/>`;
+  const dS = kt(wipe / hold);
+  const band = `<g opacity="0">
+      <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;${kt(dS * 0.06)};${kt(dS * 0.85)};${dS};1" dur="${rr(hold)}s" repeatCount="indefinite"/>
+      <animateTransform attributeName="transform" type="translate" values="0 ${rr(y0 - e / 2)};0 ${rr(y0 + A + e / 2)};0 ${rr(y0 + A + e / 2)}" keyTimes="0;${dS};1" calcMode="spline" keySplines="0.65 0 0.35 1;0 0 1 1" dur="${rr(hold)}s" repeatCount="indefinite"/>
+      <rect x="${rr(cx - maxW / 2)}" y="-56" width="${rr(maxW)}" height="56" fill="url(#beamG)"/>
+      <rect x="${rr(cx - maxW / 2)}" y="-0.5" width="${rr(maxW)}" height="1" fill="url(#bandG)"/>
+      <g fill="url(#bandG)">${[0, 1, 2].map((k) => `<g>${noise(k)}</g>`).join('')}</g>
+    </g>`;
+
+  const body = `<defs>${defs.join('')}</defs>
+    <g class="breathe"><g class="mono" font-size="${size}" font-weight="600">${layers.join('')}${band}</g></g>`;
   return {
     body,
     css: `${css.join('\n')}\n  .breathe { animation: breathe 8s ease-in-out infinite alternate; } @keyframes breathe { to { opacity: 0.72; } }`,
+    hold,
+    wipe,
   };
 }

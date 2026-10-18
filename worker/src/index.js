@@ -1,10 +1,11 @@
 /**
- * GitHub 主页背后的小服务（signal.elvhack.com）：三个所有访客共享的互动画面。
+ * GitHub 主页背后的小服务（signal.elvhack.com）：所有访客共享的互动画面。
  *
+ *   GET /face/:id             片头先浮现哪一张肖像（ghost / crimson / phantom）
  *   GET /rose/place           放上一段玫瑰曲线碎片，然后回到主页
  *   GET /dive/:move           在迷宫里 left / forward / right / back
  *   GET /draw/pull            抽一件生成艺术
- *   GET /rose.svg  /dive.svg  /draw.svg  /button/:id.svg
+ *   GET /header.svg  /rose.svg  /dive.svg  /draw.svg  /button/:id.svg
  *
  * README 里的图片经 GitHub 的 camo 代理加载，每个 SVG 都带 no-cache，访客回到主页时能看到刚才的结果。
  * camo 是 GitHub 的服务器在取图，分不出是谁在看，所以画面都是全站共享的。
@@ -12,13 +13,15 @@
  */
 import grotesk from '../../scripts/fonts/space-grotesk.woff2';
 import mono from '../../scripts/fonts/jetbrains-mono.woff2';
+import FACE_DATA from '../../scripts/faces.json';
 import { cell, start, step } from '../../scripts/dive.mjs';
+import { FACES } from '../../scripts/face.mjs';
 import { baseStyle } from '../../scripts/lib.mjs';
-import { RATES, buttonPanel, divePanel, drawPanel, rosePanel } from '../../scripts/pieces.mjs';
+import { RATES, buttonPanel, divePanel, drawPanel, headerPanel, rosePanel } from '../../scripts/pieces.mjs';
 
 const PROFILE = 'https://github.com/elv-hack';
 const MOVES = ['left', 'forward', 'right', 'back'];
-const LIMITS = { rose: 12, dive: 40, draw: 10 };
+const LIMITS = { face: 20, rose: 12, dive: 40, draw: 10 };
 const WINDOW_MS = 10 * 60_000;
 const KEEP_ROWS = 500;
 
@@ -31,6 +34,9 @@ const toBase64 = (buffer) => {
 const FONTS = baseStyle({ grotesk: toBase64(grotesk), mono: toBase64(mono) });
 
 const BUTTONS = {
+  ...Object.fromEntries(
+    FACES.map((f, i) => [f.id, { glyph: f.id, label: `fig. ${i + 1} — ${f.name}`, sub: 'bring it to the surface', counter: `face:${f.id}`, w: 380, face: i, accent: f.accent }]),
+  ),
   place: { glyph: 'place', label: 'place a fragment', sub: 'the rose grows', counter: 'rose:placed', w: 380 },
   left: { glyph: 'left', label: 'turn left', sub: 'dive', w: 280 },
   forward: { glyph: 'forward', label: 'forward', sub: 'one cell', counter: 'dive:steps', w: 280 },
@@ -44,6 +50,10 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
     let m;
+    if ((m = path.match(/^\/face\/([a-z]+)$/)) && FACES.some((f) => f.id === m[1])) {
+      await guard(() => pickFace(request, env, m[1]));
+      return Response.redirect(`${PROFILE}#face`, 302);
+    }
     if (path === '/rose/place') {
       await guard(() => placeFragment(request, env));
       return Response.redirect(`${PROFILE}#rose`, 302);
@@ -56,6 +66,7 @@ export default {
       await guard(() => pull(request, env));
       return Response.redirect(`${PROFILE}#draw`, 302);
     }
+    if (path === '/header.svg') return svg(await headerImage(env));
     if (path === '/rose.svg') return svg(await roseImage(env));
     if (path === '/dive.svg') return svg(await diveImage(env));
     if (path === '/draw.svg') return svg(await drawImage(env));
@@ -107,6 +118,14 @@ async function counters(env, keys) {
 }
 const lastAction = (env, kind) =>
   env.DB.prepare('SELECT ts, item, extra, country FROM actions WHERE kind = ? ORDER BY ts DESC, id DESC LIMIT 1').bind(kind).first();
+
+const currentFace = async (env) => (await env.DB.prepare("SELECT n FROM counters WHERE action = 'face:current'").first('n')) ?? 0;
+
+async function pickFace(request, env, id) {
+  const v = await visitor(request, env, 'face');
+  if (!v) return;
+  await env.DB.batch([log(env, 'face', id, '', v), set(env, 'face:current', FACES.findIndex((f) => f.id === id)), bump(env, `face:${id}`), prune(env)]);
+}
 
 async function placeFragment(request, env) {
   const v = await visitor(request, env, 'rose');
@@ -162,6 +181,13 @@ async function pull(request, env) {
 
 // ---------- 画面 ----------
 
+/** 片头：从访客最后选的那张开始轮播 */
+async function headerImage(env) {
+  const first = await currentFace(env);
+  const order = FACES.map((_, i) => (first + i) % FACES.length);
+  return headerPanel({ faces: FACE_DATA.portraits, order, fonts: FONTS });
+}
+
 async function roseImage(env) {
   const [c, last] = await Promise.all([counters(env, ['rose:placed']), lastAction(env, 'rose')]);
   return rosePanel({ placed: c['rose:placed'] ?? 0, last, fonts: FONTS });
@@ -189,6 +215,10 @@ async function drawImage(env) {
 
 async function buttonImage(env, id) {
   const b = BUTTONS[id];
-  const count = b.counter ? ((await env.DB.prepare('SELECT n FROM counters WHERE action = ?').bind(b.counter).first('n')) ?? 0) : null;
-  return buttonPanel({ glyph: b.glyph, label: b.label, sub: b.sub, count, w: b.w, fonts: FONTS });
+  const [count, face] = await Promise.all([
+    b.counter ? env.DB.prepare('SELECT n FROM counters WHERE action = ?').bind(b.counter).first('n').then((n) => n ?? 0) : null,
+    b.face != null ? currentFace(env) : null,
+  ]);
+  const active = b.face != null && face === b.face;
+  return buttonPanel({ glyph: b.glyph, label: b.label, sub: active ? 'on the surface now' : b.sub, count, w: b.w, accent: b.accent, active, fonts: FONTS });
 }

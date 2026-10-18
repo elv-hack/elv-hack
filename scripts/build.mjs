@@ -1,6 +1,6 @@
 /**
- * 生成 GitHub 主页的静态图（片头、一年的提交），并刷新 README 里标记之间的文章列表。
- * 会变的部分（玫瑰、迷宫、抽一件、按钮）由 worker/ 里的 Cloudflare Worker 按请求生成。
+ * 生成 GitHub 主页的静态图（一年的提交），并刷新 README 里标记之间的文章列表。
+ * 会变的部分（片头的肖像轮播、玫瑰、迷宫、抽一件、按钮）由 worker/ 里的 Cloudflare Worker 按请求生成。
  *
  *   node scripts/build.mjs          # 读 GITHUB_TOKEN / GH_TOKEN，没有就跳过需要 API 的部分
  *
@@ -10,10 +10,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ABYSS } from './abyss.mjs';
-import { faceLayer } from './face.mjs';
 import { baseStyle } from './lib.mjs';
-import { headerPanel, yearPanel } from './pieces.mjs';
+import { yearPanel } from './pieces.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const USER = 'elv-hack';
@@ -60,11 +58,6 @@ function replaceBlock(readme, key, body) {
   if (!re.test(readme)) throw new Error(`README 缺少 ${key} 标记`);
   return readme.replace(re, `$1\n${body}\n$2`);
 }
-
-// ---------- 片头 ----------
-
-const face = faceLayer({ cols: 96, rows: 54, size: 10.4, cx: 850, cy: 306, fill: 'url(#head-flow)', eye: ABYSS.amber });
-write('assets/header.svg', headerPanel({ faceGroups: face.body, faceCss: face.css, fonts: FONTS }));
 
 // ---------- README ----------
 
