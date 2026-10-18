@@ -320,7 +320,7 @@ export function headerPanel({ faces, order = [0, 1, 2], fonts }) {
   const per = (fi, fn) => fn(order.indexOf(fi));
   const fade = (j) => slotFade(j, n, face.hold, face.wipe);
   const numbers = FACES.map((f, fi) => per(fi, (j) => `<text class="mono" x="150" y="137" font-size="${FONT_SIZE.small}" fill="${C.mid}" letter-spacing="1.2" opacity="0">N° ${String(fi + 1).padStart(2, '0')} / ${String(FACES.length).padStart(2, '0')}${fade(j)}</text>`)).join('');
-  const notes = FACES.map((f, fi) => per(fi, (j) => `<text class="mono" x="72" y="${H - 46}" font-size="${FONT_SIZE.small}" fill="${C.mid}" letter-spacing="1.2" opacity="0">fig. ${fi + 1} — ${esc(f.name)} · ${esc(f.note)}${fade(j)}</text>`)).join('');
+  const notes = FACES.map((f, fi) => per(fi, (j) => `<text class="mono" x="72" y="${H - 46}" font-size="${FONT_SIZE.small}" fill="${C.mid}" letter-spacing="1.2" opacity="0">${f.numeral} — ${esc(f.name)} · ${esc(f.note)}${fade(j)}</text>`)).join('');
   const bars = FACES.map((f, fi) => {
     const x = 72 + fi * 22;
     return `<rect x="${x}" y="132" width="18" height="2" fill="${C.faint}"/>${per(fi, (j) => `<rect x="${x}" y="132" width="18" height="2" fill="${f.accent}" opacity="0">${fade(j)}</rect>`)}`;

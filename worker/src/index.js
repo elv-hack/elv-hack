@@ -35,7 +35,7 @@ const FONTS = baseStyle({ grotesk: toBase64(grotesk), mono: toBase64(mono) });
 
 const BUTTONS = {
   ...Object.fromEntries(
-    FACES.map((f, i) => [f.id, { glyph: f.id, label: `fig. ${i + 1} — ${f.name}`, sub: 'bring it to the surface', counter: `face:${f.id}`, w: 380, face: i, accent: f.accent }]),
+    FACES.map((f, i) => [f.id, { glyph: f.id, label: `${f.numeral} — ${f.name}`, sub: 'bring it to the surface', counter: `face:${f.id}`, w: 380, face: i, accent: f.accent }]),
   ),
   place: { glyph: 'place', label: 'place a fragment', sub: 'the rose grows', counter: 'rose:placed', w: 380 },
   left: { glyph: 'left', label: 'turn left', sub: 'dive', w: 280 },

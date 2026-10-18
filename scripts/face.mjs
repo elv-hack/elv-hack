@@ -10,11 +10,11 @@
 import { flowGradient } from './abyss.mjs';
 import { rng } from './lib.mjs';
 
-/** 三张图：主色（渐变里流转的几个色相）、强调色（高光）、图注 */
+/** 三张图：编号（罗马数字，和下面各个画面的 fig. 编号区分开）、主色（渐变里流转的几个色相）、强调色（高光）、图注 */
 export const FACES = [
-  { id: 'ghost', name: 'ghost', hues: ['#b9a8ff', '#8a96ff', '#dcb3ff', '#9fe6f0'], accent: '#ff5468', note: 'line and violet, surfacing from the data' },
-  { id: 'crimson', name: 'crimson', hues: ['#ff7d93', '#e98ae9', '#ffa47f', '#ff6f8a'], accent: '#ffd6dc', note: 'a red signal, half in shadow' },
-  { id: 'phantom', name: 'phantom', hues: ['#c6d4e4', '#9aa8ff', '#7fe3dc', '#e6ecf5'], accent: '#ff8a4a', note: 'after key art © Konami Digital Entertainment' },
+  { id: 'ghost', numeral: 'I', name: 'ghost', hues: ['#b9a8ff', '#8a96ff', '#dcb3ff', '#9fe6f0'], accent: '#ff5468', note: 'line and violet, surfacing from the data' },
+  { id: 'crimson', numeral: 'II', name: 'crimson', hues: ['#ff7d93', '#e98ae9', '#ffa47f', '#ff6f8a'], accent: '#ffd6dc', note: 'a red signal, half in shadow' },
+  { id: 'phantom', numeral: 'III', name: 'phantom', hues: ['#c6d4e4', '#9aa8ff', '#7fe3dc', '#e6ecf5'], accent: '#ff8a4a', note: 'after key art © Konami Digital Entertainment' },
 ];
 
 const RAMP = " .'`,:;-~=+*o%#&@";
