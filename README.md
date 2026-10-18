@@ -1,24 +1,20 @@
-<!-- 标记（posts）之间的文章列表和 assets/ 里的图都由 scripts/build.mjs 生成，GitHub Actions 每天刷新；其余部分可以直接改。 -->
+<!-- 标记（posts）之间的文章列表和 assets/ 里的图（每张有深色和 -light 两版）都由 scripts/build.mjs 生成，GitHub Actions 每天刷新；其余部分可以直接改。 -->
 
-<a href="https://elvhack.com"><img src="assets/header.svg" width="100%" alt="elvhack"></a>
+<a href="https://elvhack.com"><picture><source media="(prefers-color-scheme: light)" srcset="assets/header-light.svg"><img src="assets/header.svg" width="100%" alt="elvhack"></picture></a>
 
 <p align="center"><sub><a href="https://elvhack.com">elvhack.com</a> &nbsp;·&nbsp; <a href="https://elvhack.com/lab/">lab</a> &nbsp;·&nbsp; <a href="https://x.com/elvhack">x</a> &nbsp;·&nbsp; <a href="https://www.tiktok.com/@elvhack">tiktok</a> &nbsp;·&nbsp; <a href="https://elvhack.com/rss.xml">rss</a></sub></p>
 
 <br>
 
-<img src="assets/rose.svg" width="100%" alt="a holographic rose that blooms and withers">
+<picture><source media="(prefers-color-scheme: light)" srcset="assets/rose-light.svg"><img src="assets/rose.svg" width="100%" alt="a holographic rose that blooms and withers"></picture>
 
 <br>
 
-<img src="assets/sonar.svg" width="100%" alt="a sonar pulse sweeping a terrain of data">
+<picture><source media="(prefers-color-scheme: light)" srcset="assets/sonar-light.svg"><img src="assets/sonar.svg" width="100%" alt="a sonar pulse sweeping a terrain made of a year of commits"></picture>
 
 <br>
 
-<img src="assets/singularity.svg" width="100%" alt="a black hole with an accretion disk of data">
-
-<br>
-
-<img src="assets/year.svg" width="100%" alt="a year of commits">
+<picture><source media="(prefers-color-scheme: light)" srcset="assets/singularity-light.svg"><img src="assets/singularity.svg" width="100%" alt="a black hole with an accretion disk of data"></picture>
 
 <br>
 

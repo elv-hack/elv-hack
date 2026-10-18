@@ -1,6 +1,6 @@
 /**
  * 生成 GitHub 主页上的所有图（assets/*.svg），并刷新 README 里标记之间的文章列表。
- * 图都是自己播放的动画，没有交互：片头的三张 ASCII 肖像、全息玫瑰、声呐、奇点、一年的提交。
+ * 图都是自己播放的动画，没有交互：片头的三张 ASCII 肖像、全息玫瑰、声呐（地形是一年的提交，要 token）、奇点。
  *
  *   node scripts/build.mjs          # 读 GITHUB_TOKEN / GH_TOKEN，没有就跳过需要 API 的部分
  *
@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { baseStyle } from './lib.mjs';
-import { headerPanel, rosePanel, singularityPanel, sonarPanel, yearPanel } from './pieces.mjs';
+import { headerPanel, rosePanel, singularityPanel, sonarPanel } from './pieces.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const USER = 'elv-hack';
@@ -61,11 +61,14 @@ function replaceBlock(readme, key, body) {
 
 // ---------- 自己播放的画面 ----------
 
+// 每张图两版：深色（默认）和 -light（GitHub 浅色主题，README 里用 <picture> 切换）
+const THEMES = [['dark', ''], ['light', '-light']];
 const faces = JSON.parse(readFileSync(join(ROOT, 'scripts/faces.json'), 'utf8')).portraits;
-write('assets/header.svg', headerPanel({ faces, fonts: FONTS }));
-write('assets/rose.svg', rosePanel());
-write('assets/sonar.svg', sonarPanel());
-write('assets/singularity.svg', singularityPanel());
+for (const [theme, suffix] of THEMES) {
+  write(`assets/header${suffix}.svg`, headerPanel({ faces, fonts: FONTS, theme }));
+  write(`assets/rose${suffix}.svg`, rosePanel({ theme }));
+  write(`assets/singularity${suffix}.svg`, singularityPanel({ theme }));
+}
 
 // ---------- README ----------
 
@@ -80,17 +83,24 @@ try {
   console.warn('跳过文章列表：', error.message);
 }
 
+// 声呐的地形是一年的提交：每周一排（最近的在前），每排七天
 const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
 if (token) {
   try {
     const cal = await contributions(token);
-    const days = cal.weeks.flatMap((w) => w.contributionDays).slice(-365).map((d) => ({ date: d.date, count: d.contributionCount }));
-    write('assets/year.svg', yearPanel({ days }));
+    const weeks = cal.weeks
+      .map((w) => {
+        const days = [0, 0, 0, 0, 0, 0, 0];
+        for (const d of w.contributionDays) days[new Date(`${d.date}T00:00:00Z`).getUTCDay()] = d.contributionCount;
+        return days;
+      })
+      .reverse();
+    for (const [theme, suffix] of THEMES) write(`assets/sonar${suffix}.svg`, sonarPanel({ weeks, theme }));
   } catch (error) {
-    console.warn('跳过一年的提交：', error.message);
+    console.warn('跳过声呐（一年的提交）：', error.message);
   }
 } else {
-  console.warn('没有 GITHUB_TOKEN / GH_TOKEN，跳过一年的提交');
+  console.warn('没有 GITHUB_TOKEN / GH_TOKEN，跳过声呐（一年的提交）');
 }
 
 writeFileSync(readmePath, readme);

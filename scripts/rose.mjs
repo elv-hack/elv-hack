@@ -167,7 +167,7 @@ function stemAt(tau) {
 /**
  * 整朵玫瑰的 SVG（以花心为原点的世界坐标，投影到 (cx, cy)）。返回 { defs, body, css }。
  */
-export function hologramRose({ cx, cy, scale = 140, stroke, glow }) {
+export function hologramRose({ cx, cy, scale = 140, stroke, glow, glowOpacity = 0.13 }) {
   const list = petals();
   const view = { cx, cy, f: scale * 6.5, dist: 6.5 };
   const toScreen = (q, tau) => {
@@ -239,7 +239,7 @@ export function hologramRose({ cx, cy, scale = 140, stroke, glow }) {
   const defs = `<g id="rose-shapes">${shapes.join('')}</g>`;
   const body = `
     <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-      <use href="#rose-shapes" stroke="${glow}" stroke-width="4" opacity="0.13"/>
+      <use href="#rose-shapes" stroke="${glow}" stroke-width="4" opacity="${glowOpacity}"/>
       <use href="#rose-shapes" stroke="${stroke}" stroke-width="1.1" fill="${stroke}" fill-opacity="0.04"/>
     </g>
     <g fill="${glow}">${dust.join('')}</g>`;

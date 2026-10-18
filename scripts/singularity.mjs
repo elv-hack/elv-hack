@@ -112,6 +112,8 @@ export function singularity({ uid, cx, cy, Rs = 52, tilt = 0.17, colors }) {
     <radialGradient id="${uid}-shadow" cx="0" cy="0" r="${r1(Rs * 1.18)}" gradientUnits="userSpaceOnUse"><stop offset="0.82" stop-color="#000"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
     <radialGradient id="${uid}-glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="${colors.warm}" stop-opacity="0.16"/><stop offset="0.45" stop-color="${colors.warm}" stop-opacity="0.05"/><stop offset="1" stop-color="${colors.warm}" stop-opacity="0"/></radialGradient>
     <linearGradient id="${uid}-dim" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${colors.bg}" stop-opacity="0"/><stop offset="0.5" stop-color="${colors.bg}" stop-opacity="0.15"/><stop offset="1" stop-color="${colors.bg}" stop-opacity="0.6"/></linearGradient>`;
+  const R = r1(Rs * 1.18);
+  const hole = `M${r1(cx - R)} ${cy}a${R} ${R} 0 1 0 ${r1(2 * R)} 0a${R} ${R} 0 1 0 ${r1(-2 * R)} 0Z`;
   const body = `
     <ellipse cx="${cx}" cy="${cy}" rx="${r1(outer * 1.05)}" ry="${r1(outer * 0.42)}" fill="url(#${uid}-glow)"/>
     <g transform="translate(${cx} ${cy})">${half(false)}
@@ -123,7 +125,7 @@ export function singularity({ uid, cx, cy, Rs = 52, tilt = 0.17, colors }) {
       <path d="M${r1(-Rs * 1.03)} 0A${r1(Rs * 1.03)} ${r1(Rs * 1.03)} 0 0 1 ${r1(Rs * 1.03)} 0" fill="none" stroke="${colors.hot}" stroke-width="1.2" opacity="0.9"/>
       <path d="M${r1(-Rs * 1.07)} 0A${r1(Rs * 1.07)} ${r1(Rs * 1.07)} 0 0 1 ${r1(Rs * 1.07)} 0" fill="none" stroke="${colors.hot}" stroke-width="4" opacity="0.12"/>
     </g>
-    <rect x="${cx - outer - 20}" y="${r1(cy - outer * 0.45)}" width="${2 * outer + 40}" height="${r1(outer * 0.9)}" fill="url(#${uid}-dim)"/>`;
+    <path d="M${r1(cx - outer - 20)} ${r1(cy - outer * 0.45)}h${r1(2 * outer + 40)}v${r1(outer * 0.9)}h${r1(-2 * outer - 40)}Z${hole}" fill="url(#${uid}-dim)" fill-rule="evenodd"/>`;
   const css = `.${uid}-spin { animation: ${uid}-spin linear infinite; } @keyframes ${uid}-spin { to { transform: rotate(-360deg); } }`;
   return { defs, body, css };
 }

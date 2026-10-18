@@ -1,11 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560">
 <style>
-  .spin { animation: spin linear infinite; }
-  .ringIn { animation: rise 1.6s cubic-bezier(0.2, 0.7, 0.1, 1) var(--d) both; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
   .flicker { animation: flicker 9s steps(1, end) infinite; }
   @keyframes flicker { 0%, 100% { opacity: 1; } 93% { opacity: 0.72; } 94% { opacity: 1; } 96.5% { opacity: 0.86; } 97.5% { opacity: 1; } }
+  .spin { animation: spin linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
   .fade { animation: fade 1.4s 0.2s ease both; }
   @keyframes fade { from { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }

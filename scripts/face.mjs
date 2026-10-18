@@ -12,11 +12,11 @@
 import { flowGradient } from './abyss.mjs';
 import { rng } from './lib.mjs';
 
-/** 三张图：主色（铺在渐变里的几个色相）、强调色（高光） */
+/** 三张图：主色（铺在渐变里的几个色相）、强调色（高光）；light 是浅色主题用的一套（白底上要深一些） */
 export const FACES = [
-  { id: 'ghost', hues: ['#b9a8ff', '#8a96ff', '#dcb3ff', '#9fe6f0'], accent: '#ff5468' },
-  { id: 'crimson', hues: ['#ff7d93', '#e98ae9', '#ffa47f', '#ff6f8a'], accent: '#ffd6dc' },
-  { id: 'phantom', hues: ['#c6d4e4', '#9aa8ff', '#7fe3dc', '#e6ecf5'], accent: '#ff8a4a' },
+  { id: 'ghost', hues: ['#b9a8ff', '#8a96ff', '#dcb3ff', '#9fe6f0'], accent: '#ff5468', light: { hues: ['#4a3fc8', '#2f45c2', '#7440c9', '#1d6f8c'], accent: '#d91f3c' } },
+  { id: 'crimson', hues: ['#ff7d93', '#e98ae9', '#ffa47f', '#ff6f8a'], accent: '#ffd6dc', light: { hues: ['#b8183e', '#952d9a', '#c24a22', '#a51a48'], accent: '#e2436a' } },
+  { id: 'phantom', hues: ['#c6d4e4', '#9aa8ff', '#7fe3dc', '#e6ecf5'], accent: '#ff8a4a', light: { hues: ['#2c3c54', '#3442b8', '#0f6f77', '#3d4a60'], accent: '#d65410' } },
 ];
 
 const RAMP = " .'`,:;-~=+*o%#&@";
@@ -62,7 +62,7 @@ function bandsOf(p, size) {
  * slot 是相邻两张图开始浮现的间隔；最后一层熄灭时下一张已经开始亮起，中间没有空档。
  * 返回 { defs, body, css }。
  */
-export function faceLayer({ faces, size = 5.8, cx, cy, slot = 10.5, stagger = 0.55, fade = 2, hold = 6.5 }) {
+export function faceLayer({ faces, size = 5.8, cx, cy, theme = 'dark', slot = 10.5, stagger = 0.55, fade = 2, hold = 6.5 }) {
   const n = faces.length;
   const C = n * slot;
   const css = [];
@@ -80,7 +80,8 @@ export function faceLayer({ faces, size = 5.8, cx, cy, slot = 10.5, stagger = 0.
 
   const defs = [];
   const layers = faces.map((p, j) => {
-    const meta = FACES.find((f) => f.id === p.id);
+    const base = FACES.find((f) => f.id === p.id);
+    const meta = theme === 'light' ? { ...base, ...base.light } : base;
     const b = bandsOf(p, size);
     defs.push(flowGradient(`pf-${p.id}`, { x1: 0, y1: 0, x2: rr(b.w), y2: rr(b.h), hues: meta.hues, units: 'userSpaceOnUse', still: true }));
     const groups = b.bands.map((t, k) => `<g class="b${k}">${k === 0 ? `<g fill="${meta.accent}">${b.accent}</g>` : ''}${t}</g>`).join('');

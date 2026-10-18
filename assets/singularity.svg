@@ -1,9 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560">
-<style>
-  .spin { animation: spin linear infinite; }
-  .ringIn { animation: rise 1.6s cubic-bezier(0.2, 0.7, 0.1, 1) var(--d) both; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes rise { from { opacity: 0; transform: translateY(18px); } }.bh-spin { animation: bh-spin linear infinite; } @keyframes bh-spin { to { transform: rotate(-360deg); } }
+<style>.bh-spin { animation: bh-spin linear infinite; } @keyframes bh-spin { to { transform: rotate(-360deg); } }
+  .spin { animation: spin linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
   .fade { animation: fade 1.4s 0.2s ease both; }
   @keyframes fade { from { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
@@ -33,7 +30,7 @@
       <path d="M-65.9 0A65.9 65.9 0 0 1 65.9 0" fill="none" stroke="#ffe7c2" stroke-width="1.2" opacity="0.9"/>
       <path d="M-68.5 0A68.5 68.5 0 0 1 68.5 0" fill="none" stroke="#ffe7c2" stroke-width="4" opacity="0.12"/>
     </g>
-    <rect x="266.4" y="138.9" width="667.2" height="282.2" fill="url(#bh-dim)"/>
+    <path d="M266.4 138.9h667.2v282.2h-667.2ZM524.5 280a75.5 75.5 0 1 0 151 0a75.5 75.5 0 1 0 -151 0Z" fill="url(#bh-dim)" fill-rule="evenodd"/>
   <rect width="1200" height="560" fill="url(#sing-vig)" pointer-events="none"/>
 </g>
 <rect x="0.5" y="0.5" width="1199" height="559" rx="13.5" fill="none" stroke="rgba(160,180,220,0.12)"/>
