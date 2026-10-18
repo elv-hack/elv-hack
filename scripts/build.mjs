@@ -1,6 +1,6 @@
 /**
- * 生成 GitHub 主页的静态图（一年的提交），并刷新 README 里标记之间的文章列表。
- * 会变的部分（片头的肖像轮播、玫瑰、迷宫、抽一件、按钮）由 worker/ 里的 Cloudflare Worker 按请求生成。
+ * 生成 GitHub 主页上的所有图（assets/*.svg），并刷新 README 里标记之间的文章列表。
+ * 图都是自己播放的动画，没有交互：片头的三张 ASCII 肖像、全息玫瑰、声呐、奇点、一年的提交。
  *
  *   node scripts/build.mjs          # 读 GITHUB_TOKEN / GH_TOKEN，没有就跳过需要 API 的部分
  *
@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { baseStyle } from './lib.mjs';
-import { yearPanel } from './pieces.mjs';
+import { headerPanel, rosePanel, singularityPanel, sonarPanel, yearPanel } from './pieces.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const USER = 'elv-hack';
@@ -20,7 +20,7 @@ const POSTS = 6;
 const TZ = 'Asia/Shanghai';
 
 const font = (file) => readFileSync(join(ROOT, 'scripts/fonts', file)).toString('base64');
-const FONTS = baseStyle({ grotesk: font('space-grotesk.woff2'), mono: font('jetbrains-mono.woff2') });
+const FONTS = baseStyle({ mono: font('jetbrains-mono.woff2') });
 
 const dayFormat = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: TZ });
 const fmtDate = (date) => dayFormat.format(date).replaceAll('/', '.');
@@ -59,6 +59,14 @@ function replaceBlock(readme, key, body) {
   return readme.replace(re, `$1\n${body}\n$2`);
 }
 
+// ---------- 自己播放的画面 ----------
+
+const faces = JSON.parse(readFileSync(join(ROOT, 'scripts/faces.json'), 'utf8')).portraits;
+write('assets/header.svg', headerPanel({ faces, fonts: FONTS }));
+write('assets/rose.svg', rosePanel());
+write('assets/sonar.svg', sonarPanel());
+write('assets/singularity.svg', singularityPanel());
+
 // ---------- README ----------
 
 const readmePath = join(ROOT, 'README.md');
@@ -77,7 +85,7 @@ if (token) {
   try {
     const cal = await contributions(token);
     const days = cal.weeks.flatMap((w) => w.contributionDays).slice(-365).map((d) => ({ date: d.date, count: d.contributionCount }));
-    write('assets/year.svg', yearPanel({ days, total: cal.totalContributions, fonts: FONTS }));
+    write('assets/year.svg', yearPanel({ days }));
   } catch (error) {
     console.warn('跳过一年的提交：', error.message);
   }
